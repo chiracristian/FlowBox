@@ -1,1 +1,11 @@
-idf_component_register(SRCS "main.c" INCLUDE_DIRS ".")
+idf_component_register(
+    SRCS 
+        "main.c"
+        "button.c"
+        "display.c"
+        "i2c.c"
+        "particle_grid.c"
+        "storage.c"
+    INCLUDE_DIRS 
+        "."
+)
