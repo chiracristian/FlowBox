@@ -5,38 +5,36 @@
 
 // I2C Bus Configuration
 #define I2C_MASTER_NUM              0
-#define I2C_MASTER_SDA_IO           4
-#define I2C_MASTER_SCL_IO           5
+#define I2C_MASTER_SDA_IO           15
+#define I2C_MASTER_SCL_IO           7
 #define I2C_MASTER_FREQ_HZ          400000
+#define I2C_MASTER_TX_BUF_DISABLE   0
+#define I2C_MASTER_RX_BUF_DISABLE   0
 
 // I2C Devices Addresses
 #define QMI8658_I2C_ADDRESS         0x6B
 #define TSL2561_I2C_ADDRESS         0x39
 
-// =============================================================================
 // QMI8658 REGISTERS & COEFFICIENTS
-// =============================================================================
+#define QMI8658_REG_STATUS0         0x2C       // Output Data Status Register
+#define QMI8658_REG_CTRL1           0x02       
+#define QMI8658_REG_CTRL2           0x03       
+#define QMI8658_REG_CTRL7           0x08       
+#define QMI8658_REG_CTRL8           0x09       // DSP Command Register
 #define QMI8658_REG_DATA_OUT_BASE   0x35       
 #define QMI8658_ACCEL_SCALE_4096G   4096.0f    
 #define QMI8658_GYRO_SCALE_64DPS    64.0f      
 
-// =============================================================================
 // TSL2561 REGISTERS, COMMANDS & COEFFICIENTS
-// =============================================================================
 #define TSL2561_CMD_SELECT_BIT      0x80       
 #define TSL2561_CMD_WORD_PROTOCOL   0x20       
 #define TSL2561_REG_CHAN0_BASE      0x0C       
 #define TSL2561_REG_CHAN1_BASE      0x0E       
 
-// Piecewise ratio constraints from TAOS Datasheet Section
 #define TSL2561_RATIO_K1            0.50f
 #define TSL2561_RATIO_K2            0.61f
 #define TSL2561_RATIO_K3            0.80f
 #define TSL2561_RATIO_K4            1.30f
-
-// =============================================================================
-// HARDWARE DATA STRUCTURES
-// =============================================================================
 
 typedef struct {
     float acc_x;  
@@ -47,30 +45,13 @@ typedef struct {
     float gyro_z; 
 } i2c_imu_data_t;
 
-// =============================================================================
-// FUNCTION PROTOTYPES
-// =============================================================================
-
-/**
- * @brief Configures the physical I2C master bus and registers device handles.
- * @return esp_err_t ESP_OK on success, or an error code on failure.
- */
+// Function Prototypes
 esp_err_t i2c_bus_master_init(void);
-
-/**
- * @brief Probes the active bus network to verify device presence natively.
- * @return esp_err_t ESP_OK if all targeted devices respond, error code otherwise.
- */
 esp_err_t i2c_bus_probe_peripherals(void);
 
-/**
- * @brief Reads raw motion vectors from the onboard QMI8658 IMU registers.
- */
+esp_err_t i2c_sensor_init_imu(void);
 esp_err_t i2c_sensor_read_imu(i2c_imu_data_t *imu_data);
 
-/**
- * @brief Reads luminosity channels from the external TSL2561 and computes Lux.
- */
 esp_err_t i2c_sensor_read_light(float *lux_value);
 
 #endif // I2C_H
