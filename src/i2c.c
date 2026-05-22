@@ -129,11 +129,10 @@ esp_err_t i2c_sensor_read_imu(i2c_imu_data_t *imu_data)
     int16_t raw_gyro_y = (int16_t)((raw_data[9] << 8)  | raw_data[8]);
     int16_t raw_gyro_z = (int16_t)((raw_data[11] << 8) | raw_data[10]);
 
-    // Multiply the parsed floats by 2.0f inside the math layer directly.
-    // This perfectly compensates for the factory firmware scale map discrepancy.
-    imu_data->acc_x  = ((float)raw_acc_x  / QMI8658_ACCEL_SCALE_4096G) * 2.0f;
-    imu_data->acc_y  = ((float)raw_acc_y  / QMI8658_ACCEL_SCALE_4096G) * 2.0f;
-    imu_data->acc_z  = ((float)raw_acc_z  / QMI8658_ACCEL_SCALE_4096G) * 2.0f;
+    imu_data->acc_x  = ((float)raw_acc_x  / QMI8658_ACCEL_SCALE_4096G) * 2.0f + ACC_X_OFFSET;
+    imu_data->acc_y  = ((float)raw_acc_y  / QMI8658_ACCEL_SCALE_4096G) * 2.0f + ACC_Y_OFFSET;
+    imu_data->acc_z  = ((float)raw_acc_z  / QMI8658_ACCEL_SCALE_4096G) * 2.0f + ACC_Z_OFFSET;
+
     imu_data->gyro_x = (float)raw_gyro_x / QMI8658_GYRO_SCALE_64DPS;
     imu_data->gyro_y = (float)raw_gyro_y / QMI8658_GYRO_SCALE_64DPS;
     imu_data->gyro_z = (float)raw_gyro_z / QMI8658_GYRO_SCALE_64DPS;
