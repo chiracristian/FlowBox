@@ -13,7 +13,7 @@
 
 // I2C Devices Addresses
 #define QMI8658_I2C_ADDRESS         0x6B
-#define TSL2561_I2C_ADDRESS         0x49
+#define TSL2561_I2C_ADDRESS         0x39
 
 // QMI8658 REGISTERS & COEFFICIENTS
 #define QMI8658_REG_STATUS0         0x2C       // Output Data Status Register
@@ -56,6 +56,7 @@ esp_err_t i2c_bus_probe_peripherals(void);
 esp_err_t i2c_sensor_init_imu(void);
 esp_err_t i2c_sensor_read_imu(i2c_imu_data_t *imu_data);
 
-esp_err_t i2c_sensor_read_light(float *lux_value);
+esp_err_t i2c_sensor_wakeup_light(void);
+esp_err_t i2c_sensor_read_light(float *lux_value, uint16_t *raw_ch0, uint16_t *raw_ch1);
 
 #endif // I2C_H
