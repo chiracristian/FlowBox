@@ -6,6 +6,7 @@
 #include "i2c.h"
 #include "particle_grid.h"
 #include "display.h"
+#include "button.h"
 
 static const char *TAG = "FlowBox_Core";
 
@@ -35,7 +36,6 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initializing hardware I2C bus lines (SDA: GPIO %d, SCL: GPIO %d)...", 
              I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO);
-    
     esp_err_t err = i2c_bus_master_init();
     if (err != ESP_OK) {
         return;
@@ -65,6 +65,9 @@ void app_main(void)
 
     particle_grid_init(&grid_ctx);
     particle_grid_spawn_triangle(&grid_ctx, 60, 80, 40, 30);
+
+    // Initialize the button hardware and pass the physics context
+    button_init(&grid_ctx);
 
     xTaskCreatePinnedToCore(simulation_task, "sim_task", 4096, NULL, 5, NULL, 1);
 
