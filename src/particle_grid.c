@@ -3,6 +3,29 @@
 #include <stdlib.h>
 #include <math.h>
 
+/* Thick Map Layout Geometry Configurations (Min 2-4 units thick to prevent tunneling) */
+#define FUNNEL_TOP_Y            70
+#define FUNNEL_BOTTOM_Y         100
+#define FUNNEL_OPENING_HALF     8
+#define WALL_THICKNESS          2
+
+#define PEG_ROW_1_Y             150
+#define PEG_ROW_2_Y             190
+#define PEG_SPACING_X           24
+#define PEG_OFFSET_X            12
+#define PEG_SIZE                3 // 3x3 block pegs provide an airtight collision footprint
+
+#define BASIN_LEFT_X            35
+#define BASIN_RIGHT_X           125
+#define BASIN_Y                 270
+#define BASIN_HEIGHT            30
+#define BASIN_THICKNESS         3
+
+#define SEPARATOR_X             80
+#define SEPARATOR_START_Y       320
+#define SEPARATOR_END_Y         390
+#define SEPARATOR_THICKNESS     4
+
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
@@ -16,30 +39,71 @@ void particle_grid_init(particle_grid_context_t *ctx)
 
     memset(ctx->current_grid, CELL_TYPE_AIR, GRID_SIZE);
 
+    /* Construct outer bounding container walls (2 units thick for airtight seal) */
     for (int y = 0; y < GRID_HEIGHT; y++) {
         for (int x = 0; x < GRID_WIDTH; x++) {
-            if (x == 0 || x == (GRID_WIDTH - 1) || y == 0 || y == (GRID_HEIGHT - 1)) {
+            if (x < WALL_THICKNESS || x >= (GRID_WIDTH - WALL_THICKNESS) || 
+                y < WALL_THICKNESS || y >= (GRID_HEIGHT - WALL_THICKNESS)) {
                 ctx->current_grid[CELL(x, y)] = CELL_TYPE_WALL;
             }
         }
     }
 
-    for (int x = 10; x < 65; x++) {
-        ctx->current_grid[CELL(x, 150)] = CELL_TYPE_WALL;
-    }
-    for (int x = 95; x < 150; x++) {
-        ctx->current_grid[CELL(x, 150)] = CELL_TYPE_WALL;
-    }
-    for (int y = 240; y < 255; y++) {
-        for (int x = 65; x < 95; x++) {
-            ctx->current_grid[CELL(x, y)] = CELL_TYPE_WALL;
+    /* 1. Upper Hourglass Funnel (Thickened horizontally to 2 units) */
+    int mid_x = GRID_WIDTH / 2;
+    for (int y = FUNNEL_TOP_Y; y < FUNNEL_BOTTOM_Y; y++) {
+        int delta_y = y - FUNNEL_TOP_Y;
+        int wall_gap = FUNNEL_OPENING_HALF + ((FUNNEL_BOTTOM_Y - FUNNEL_TOP_Y - delta_y) / 2);
+        
+        int left_wall_x = mid_x - wall_gap;
+        int right_wall_x = mid_x + wall_gap;
+
+        for (int t = 0; t < WALL_THICKNESS; t++) {
+            if ((left_wall_x - t) > 0) {
+                ctx->current_grid[CELL(left_wall_x - t, y)] = CELL_TYPE_WALL;
+            }
+            if ((right_wall_x + t) < GRID_WIDTH - 1) {
+                ctx->current_grid[CELL(right_wall_x + t, y)] = CELL_TYPE_WALL;
+            }
         }
     }
-    for (int i = 0; i < 35; i++) {
-        ctx->current_grid[CELL(20 + i, 310 + i)] = CELL_TYPE_WALL;
+
+    /* 2. Mid-level Pachinko Peg Matrix (Row 1 - Increased to 3x3 structures) */
+    for (int x = PEG_SPACING_X; x < GRID_WIDTH - WALL_THICKNESS; x += PEG_SPACING_X) {
+        for (int py = 0; py < PEG_SIZE; py++) {
+            for (int px = 0; px < PEG_SIZE; px++) {
+                ctx->current_grid[CELL(x + px, PEG_ROW_1_Y + py)] = CELL_TYPE_WALL;
+            }
+        }
     }
-    for (int i = 0; i < 35; i++) {
-        ctx->current_grid[CELL(140 - i, 310 + i)] = CELL_TYPE_WALL;
+
+    /* Mid-level Pachinko Peg Matrix (Row 2 - Staggered Offset 3x3 structures) */
+    for (int x = PEG_OFFSET_X; x < GRID_WIDTH - WALL_THICKNESS; x += PEG_SPACING_X) {
+        for (int py = 0; py < PEG_SIZE; py++) {
+            for (int px = 0; px < PEG_SIZE; px++) {
+                ctx->current_grid[CELL(x + px, PEG_ROW_2_Y + py)] = CELL_TYPE_WALL;
+            }
+        }
+    }
+
+    /* 3. Central Storage Basin (Thickened base and vertical columns to 3 units) */
+    for (int x = BASIN_LEFT_X; x <= BASIN_RIGHT_X; x++) {
+        for (int t = 0; t < BASIN_THICKNESS; t++) {
+            ctx->current_grid[CELL(x, BASIN_Y + t)] = CELL_TYPE_WALL;
+        }
+    }
+    for (int h = 0; h < BASIN_HEIGHT; h++) {
+        for (int t = 0; t < BASIN_THICKNESS; t++) {
+            ctx->current_grid[CELL(BASIN_LEFT_X - t, BASIN_Y - h)] = CELL_TYPE_WALL;
+            ctx->current_grid[CELL(BASIN_RIGHT_X + t, BASIN_Y - h)] = CELL_TYPE_WALL;
+        }
+    }
+
+    /* 4. Lower Binary Splitter Wall (Thickened to 4 units width) */
+    for (int y = SEPARATOR_START_Y; y < SEPARATOR_END_Y; y++) {
+        for (int t = 0; t < SEPARATOR_THICKNESS; t++) {
+            ctx->current_grid[CELL(SEPARATOR_X - (SEPARATOR_THICKNESS / 2) + t, y)] = CELL_TYPE_WALL;
+        }
     }
 
     memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
