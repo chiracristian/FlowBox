@@ -7,7 +7,8 @@
 #define FUNNEL_TOP_Y            35
 #define FUNNEL_BOTTOM_Y         50
 #define FUNNEL_OPENING_HALF     4
-#define WALL_THICKNESS          1
+#define WALL_THICKNESS          2
+#define BORDER_WALL_THICKNESS   1
 
 #define PEG_ROW_1_Y             75
 #define PEG_ROW_2_Y             95
@@ -45,8 +46,8 @@ void particle_grid_init(particle_grid_context_t *ctx)
 
     for (int y = 0; y < GRID_HEIGHT; y++) {
         for (int x = 0; x < GRID_WIDTH; x++) {
-            if (x < WALL_THICKNESS || x >= (GRID_WIDTH - WALL_THICKNESS) || 
-                y < WALL_THICKNESS || y >= (GRID_HEIGHT - WALL_THICKNESS)) {
+            if (x < BORDER_WALL_THICKNESS || x >= (GRID_WIDTH - BORDER_WALL_THICKNESS) || 
+                y < BORDER_WALL_THICKNESS || y >= (GRID_HEIGHT - BORDER_WALL_THICKNESS)) {
                 ctx->current_grid[CELL(x, y)] = CELL_TYPE_WALL;
             }
         }
@@ -211,10 +212,6 @@ void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
     }
 }
 
-/* ============================================================================
- * CORE SIMULATION KERNELS (IN-PLACE MEMORY ARCHITECTURE)
- * ============================================================================ */
-
 /* Fast In-Place Swapping Macro */
 #define TRY_MOVE(dx, dy) \
     if (ctx->next_grid[CELL(x + (dx), y + (dy))] == CELL_TYPE_AIR) { \
@@ -243,24 +240,35 @@ static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, floa
     int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
     int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0;
+    float wx = abs_x * abs_x;
+    float wy = abs_y * abs_y;
+    float total_w = wx + wy;
 
-    if (abs_y >= abs_x) {
+    bool y_is_primary = true;
+    if (total_w > 0.0001f) {
+        float rnd = (float)rand() / (float)RAND_MAX * total_w;
+        y_is_primary = (rnd <= wy);
+    }
+
+    int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0;
+    int side_step;
+
+    if (y_is_primary) {
         prim_dy = sign_y;
         sec_dx  = sign_x;  sec_dy  = sign_y;
         tert_dx = -sign_x; tert_dy = sign_y;
+        side_step = (y % 2 == 0) ? 1 : -1; 
     } else {
         prim_dx = sign_x;
         sec_dx  = sign_x;  sec_dy  = sign_y;
         tert_dx = sign_x;  tert_dy = -sign_y;
+        side_step = (x % 2 == 0) ? 1 : -1; 
     }
 
-    if (abs_y >= abs_x && sign_x == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dx = r; tert_dx = -r;
-    } else if (abs_x > abs_y && sign_y == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dy = r; tert_dy = -r;
+    if (y_is_primary && sign_x == 0) {
+        sec_dx = side_step; tert_dx = -side_step;
+    } else if (!y_is_primary && sign_y == 0) {
+        sec_dy = side_step; tert_dy = -side_step;
     }
 
     if (prim_dx != 0 || prim_dy != 0) { TRY_MOVE(prim_dx, prim_dy); }
@@ -278,10 +286,20 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
     int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
     int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
+    float wx = abs_x * abs_x;
+    float wy = abs_y * abs_y;
+    float total_w = wx + wy;
+
+    bool y_is_primary = true;
+    if (total_w > 0.0001f) {
+        float rnd = (float)rand() / (float)RAND_MAX * total_w;
+        y_is_primary = (rnd <= wy);
+    }
+
     int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0, sprint_dx = 0, sprint_dy = 0;
     int side_step;
 
-    if (abs_y >= abs_x) {
+    if (y_is_primary) {
         prim_dy = sign_y;
         sec_dx  = sign_x;  sec_dy  = sign_y;
         tert_dx = -sign_x; tert_dy = sign_y;
@@ -295,9 +313,9 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
         side_step = (x % 2 == 0) ? 1 : -1; 
     }
 
-    if (abs_y >= abs_x && sign_x == 0) {
+    if (y_is_primary && sign_x == 0) {
         sec_dx = side_step; tert_dx = -side_step;
-    } else if (abs_x > abs_y && sign_y == 0) {
+    } else if (!y_is_primary && sign_y == 0) {
         sec_dy = side_step; tert_dy = -side_step;
     }
 
@@ -305,16 +323,16 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
     if (sec_dx != 0 || sec_dy != 0) { TRY_MOVE(sec_dx, sec_dy); }
     if (tert_dx != 0 || tert_dy != 0) { TRY_MOVE(tert_dx, tert_dy); }
 
-    int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
+    int sprint_dir_1 = y_is_primary ? sign_x : sign_y;
     int max_spread = 1;
     bool allow_reverse = true;
 
     if (sprint_dir_1 == 0) {
         sprint_dir_1 = side_step; 
         max_spread = 2; 
-        allow_reverse = false; // Fix: Stop wall-bouncing when flat
+        allow_reverse = false;
     } else {
-        float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
+        float lateral_acc = y_is_primary ? abs_x : abs_y;
         max_spread = (lateral_acc > 0.3f) ? 3 : 2;
     }
 
@@ -339,15 +357,25 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
     
     if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) return;
 
-    if (rand() % 5 == 0) return; // Fix: Fast 20% skip chance for viscosity
+    if (rand() % 5 == 0) return; 
 
     int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
     int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
+    float wx = abs_x * abs_x;
+    float wy = abs_y * abs_y;
+    float total_w = wx + wy;
+
+    bool y_is_primary = true;
+    if (total_w > 0.0001f) {
+        float rnd = (float)rand() / (float)RAND_MAX * total_w;
+        y_is_primary = (rnd <= wy);
+    }
+
     int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0, sprint_dx = 0, sprint_dy = 0;
     int side_step;
 
-    if (abs_y >= abs_x) {
+    if (y_is_primary) {
         prim_dy = sign_y;
         sec_dx  = sign_x;  sec_dy  = sign_y;
         tert_dx = -sign_x; tert_dy = sign_y;
@@ -361,9 +389,9 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         side_step = (x % 2 == 0) ? 1 : -1;
     }
 
-    if (abs_y >= abs_x && sign_x == 0) {
+    if (y_is_primary && sign_x == 0) {
         sec_dx = side_step; tert_dx = -side_step;
-    } else if (abs_x > abs_y && sign_y == 0) {
+    } else if (!y_is_primary && sign_y == 0) {
         sec_dy = side_step; tert_dy = -side_step;
     }
 
@@ -371,7 +399,7 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
     if (sec_dx != 0 || sec_dy != 0) { TRY_MOVE(sec_dx, sec_dy); }
     if (tert_dx != 0 || tert_dy != 0) { TRY_MOVE(tert_dx, tert_dy); }
 
-    int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
+    int sprint_dir_1 = y_is_primary ? sign_x : sign_y;
     int max_spread = 1;
     bool allow_reverse = true;
 
@@ -380,7 +408,7 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         max_spread = 1; 
         allow_reverse = false;
     } else {
-        float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
+        float lateral_acc = y_is_primary ? abs_x : abs_y;
         max_spread = (lateral_acc > 0.4f) ? 2 : 1;
     }
 
