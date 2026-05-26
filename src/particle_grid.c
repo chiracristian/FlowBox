@@ -270,8 +270,9 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
         return;
     }
 
-    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
-    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
+    // FIX: Respect the threshold deadzone so IMU noise doesn't trigger violent lateral shaking
+    int sign_x = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_y = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
 
     int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
 
@@ -323,13 +324,23 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
     }
 
     int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
-    if (sprint_dir_1 == 0) sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
-    int sprint_dir_2 = -sprint_dir_1;
+    int max_spread = 1;
 
+    if (sprint_dir_1 == 0) {
+        sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
+        max_spread = 1; 
+    } else {
+        float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
+        if (lateral_acc > 0.4f) max_spread = 4;
+        else if (lateral_acc > 0.2f) max_spread = 2;
+        else max_spread = 1;
+    }
+
+    int sprint_dir_2 = -sprint_dir_1;
     bool blocked_1 = false;
     bool blocked_2 = false;
 
-    for (int spread = 1; spread <= 5; spread++) {
+    for (int spread = 1; spread <= max_spread; spread++) {
         if (!blocked_1) {
             int cx1 = x + sprint_dx * sprint_dir_1 * spread;
             int cy1 = y + sprint_dy * sprint_dir_1 * spread;
@@ -370,18 +381,14 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         return;
     }
 
-    static uint8_t viscosity_divider = 0;
-    if (x == 1 && y == 1) {
-        viscosity_divider++;
-    }
-
-    if ((viscosity_divider % 2) != 0) {
+    // FIX: Replaced broken coordinate-locked viscosity with organic random per-particle skipping
+    if (rand() % 3 != 0) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }
 
-    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
-    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
+    int sign_x = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_y = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
 
     int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
 
@@ -433,13 +440,22 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
     }
 
     int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
-    if (sprint_dir_1 == 0) sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
-    int sprint_dir_2 = -sprint_dir_1;
+    int max_spread = 1;
 
+    if (sprint_dir_1 == 0) {
+        sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
+        max_spread = 1; 
+    } else {
+        float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
+        if (lateral_acc > 0.3f) max_spread = 2; 
+        else max_spread = 1;
+    }
+
+    int sprint_dir_2 = -sprint_dir_1;
     bool blocked_1 = false;
     bool blocked_2 = false;
 
-    for (int spread = 1; spread <= 2; spread++) {
+    for (int spread = 1; spread <= max_spread; spread++) {
         if (!blocked_1) {
             int cx1 = x + sprint_dx * sprint_dir_1 * spread;
             int cy1 = y + sprint_dy * sprint_dir_1 * spread;
