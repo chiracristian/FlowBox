@@ -160,22 +160,36 @@ const uint8_t* particle_grid_get_render_buffer(const particle_grid_context_t *ct
 
 static void execute_physics_substep(particle_grid_context_t *ctx, float acc_x, float acc_y)
 {
-    for (int i = 0; i < GRID_SIZE; i++) {
-        if (ctx->current_grid[i] == CELL_TYPE_WALL) {
-            ctx->next_grid[i] = CELL_TYPE_WALL;
-        } else {
-            ctx->next_grid[i] = CELL_TYPE_AIR;
-        }
+    /* 1. Copy the snapshot to work on it in-place */
+    memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
+
+    /* 2. Dynamically align the traversal order with the gravity vector to prevent "boiling" gaps */
+    int start_y = 1, end_y = GRID_HEIGHT - 1, step_y = 1;
+    if (acc_y > 0.0f) {
+        start_y = GRID_HEIGHT - 2;
+        end_y = 0;
+        step_y = -1;
     }
 
-    for (int y = 1; y < GRID_HEIGHT - 1; y++) {
-        for (int x = 1; x < GRID_WIDTH - 1; x++) {
-            if (ctx->current_grid[CELL(x, y)] == CELL_TYPE_PARTICLE) {
+    int start_x = 1, end_x = GRID_WIDTH - 1, step_x = 1;
+    if (acc_x > 0.0f) {
+        start_x = GRID_WIDTH - 2;
+        end_x = 0;
+        step_x = -1;
+    }
+
+    for (int y = start_y; y != end_y; y += step_y) {
+        for (int x = start_x; x != end_x; x += step_x) {
+            /* Only process if it was a particle at the start, AND hasn't already moved this pass */
+            if (ctx->current_grid[CELL(x, y)] == CELL_TYPE_PARTICLE && 
+                ctx->next_grid[CELL(x, y)] == CELL_TYPE_PARTICLE) 
+            {
                 ctx->update_particle(ctx, x, y, acc_x, acc_y);
             }
         }
     }
 
+    /* 3. Commit the in-place modifications to the active buffer */
     uint8_t *temp = ctx->current_grid;
     ctx->current_grid = ctx->next_grid;
     ctx->next_grid = temp;
@@ -197,29 +211,48 @@ void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
     }
 }
 
+/* ============================================================================
+ * CORE SIMULATION KERNELS (IN-PLACE MEMORY ARCHITECTURE)
+ * ============================================================================ */
+
+/* Fast In-Place Swapping Macro */
+#define TRY_MOVE(dx, dy) \
+    if (ctx->next_grid[CELL(x + (dx), y + (dy))] == CELL_TYPE_AIR) { \
+        ctx->next_grid[CELL(x, y)] = CELL_TYPE_AIR; \
+        ctx->next_grid[CELL(x + (dx), y + (dy))] = CELL_TYPE_PARTICLE; \
+        return; \
+    }
+
+/* Bounded Lateral Sprinting Macro */
+#define TRY_SPRINT(dx, dy, block_flag) \
+    if (x + (dx) > 0 && x + (dx) < GRID_WIDTH - 1 && y + (dy) > 0 && y + (dy) < GRID_HEIGHT - 1) { \
+        if (ctx->next_grid[CELL(x + (dx), y + (dy))] == CELL_TYPE_AIR) { \
+            ctx->next_grid[CELL(x, y)] = CELL_TYPE_AIR; \
+            ctx->next_grid[CELL(x + (dx), y + (dy))] = CELL_TYPE_PARTICLE; \
+            return; \
+        } else { block_flag = true; } \
+    } else { block_flag = true; }
+
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
     float abs_x = fabsf(acc_x);
     float abs_y = fabsf(acc_y);
     
-    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
-        ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
-        return;
-    }
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) return;
 
     int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
     int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy;
+    int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0;
 
     if (abs_y >= abs_x) {
-        prim_dx = 0;             prim_dy = sign_y;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = -sign_x;       tert_dy = sign_y;
+        prim_dy = sign_y;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = -sign_x; tert_dy = sign_y;
     } else {
-        prim_dx = sign_x;        prim_dy = 0;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = sign_x;        tert_dy = -sign_y;
+        prim_dx = sign_x;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = sign_x;  tert_dy = -sign_y;
     }
 
     if (abs_y >= abs_x && sign_x == 0) {
@@ -230,34 +263,9 @@ static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, floa
         sec_dy = r; tert_dy = -r;
     }
 
-    if (prim_dx != 0 || prim_dy != 0) {
-        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (sec_dx != 0 || sec_dy != 0) {
-        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (tert_dx != 0 || tert_dy != 0) {
-        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
+    if (prim_dx != 0 || prim_dy != 0) { TRY_MOVE(prim_dx, prim_dy); }
+    if (sec_dx != 0 || sec_dy != 0) { TRY_MOVE(sec_dx, sec_dy); }
+    if (tert_dx != 0 || tert_dy != 0) { TRY_MOVE(tert_dx, tert_dy); }
 }
 
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
@@ -265,110 +273,63 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
     float abs_x = fabsf(acc_x);
     float abs_y = fabsf(acc_y);
     
-    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
-        ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
-        return;
-    }
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) return;
 
-    // FIX: Respect the threshold deadzone so IMU noise doesn't trigger violent lateral shaking
-    int sign_x = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
-    int sign_y = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
+    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
+    int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0, sprint_dx = 0, sprint_dy = 0;
+    int side_step;
 
     if (abs_y >= abs_x) {
-        prim_dx = 0;             prim_dy = sign_y;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = -sign_x;       tert_dy = sign_y;
-        sprint_dx = 1;           sprint_dy = 0;
+        prim_dy = sign_y;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = -sign_x; tert_dy = sign_y;
+        sprint_dx = 1;
+        side_step = (y % 2 == 0) ? 1 : -1; 
     } else {
-        prim_dx = sign_x;        prim_dy = 0;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = sign_x;        tert_dy = -sign_y;
-        sprint_dx = 0;           sprint_dy = 1;
+        prim_dx = sign_x;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = sign_x;  tert_dy = -sign_y;
+        sprint_dy = 1;
+        side_step = (x % 2 == 0) ? 1 : -1; 
     }
 
     if (abs_y >= abs_x && sign_x == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dx = r; tert_dx = -r;
+        sec_dx = side_step; tert_dx = -side_step;
     } else if (abs_x > abs_y && sign_y == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dy = r; tert_dy = -r;
+        sec_dy = side_step; tert_dy = -side_step;
     }
 
-    if (prim_dx != 0 || prim_dy != 0) {
-        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (sec_dx != 0 || sec_dy != 0) {
-        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (tert_dx != 0 || tert_dy != 0) {
-        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
+    if (prim_dx != 0 || prim_dy != 0) { TRY_MOVE(prim_dx, prim_dy); }
+    if (sec_dx != 0 || sec_dy != 0) { TRY_MOVE(sec_dx, sec_dy); }
+    if (tert_dx != 0 || tert_dy != 0) { TRY_MOVE(tert_dx, tert_dy); }
 
     int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
     int max_spread = 1;
+    bool allow_reverse = true;
 
     if (sprint_dir_1 == 0) {
-        sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
-        max_spread = 1; 
+        sprint_dir_1 = side_step; 
+        max_spread = 2; 
+        allow_reverse = false; // Fix: Stop wall-bouncing when flat
     } else {
         float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
-        if (lateral_acc > 0.4f) max_spread = 4;
-        else if (lateral_acc > 0.2f) max_spread = 2;
-        else max_spread = 1;
+        max_spread = (lateral_acc > 0.3f) ? 3 : 2;
     }
 
     int sprint_dir_2 = -sprint_dir_1;
     bool blocked_1 = false;
-    bool blocked_2 = false;
+    bool blocked_2 = !allow_reverse;
 
     for (int spread = 1; spread <= max_spread; spread++) {
         if (!blocked_1) {
-            int cx1 = x + sprint_dx * sprint_dir_1 * spread;
-            int cy1 = y + sprint_dy * sprint_dir_1 * spread;
-            if (cx1 > 0 && cx1 < GRID_WIDTH - 1 && cy1 > 0 && cy1 < GRID_HEIGHT - 1) {
-                if (ctx->current_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx1, cy1)] = CELL_TYPE_PARTICLE; 
-                    return;
-                } else {
-                    blocked_1 = true;
-                }
-            } else { blocked_1 = true; }
+            TRY_SPRINT(sprint_dx * sprint_dir_1 * spread, sprint_dy * sprint_dir_1 * spread, blocked_1);
         }
-
         if (!blocked_2) {
-            int cx2 = x + sprint_dx * sprint_dir_2 * spread;
-            int cy2 = y + sprint_dy * sprint_dir_2 * spread;
-            if (cx2 > 0 && cx2 < GRID_WIDTH - 1 && cy2 > 0 && cy2 < GRID_HEIGHT - 1) {
-                if (ctx->current_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx2, cy2)] = CELL_TYPE_PARTICLE; 
-                    return;
-                } else {
-                    blocked_2 = true;
-                }
-            } else { blocked_2 = true; }
+            TRY_SPRINT(sprint_dx * sprint_dir_2 * spread, sprint_dy * sprint_dir_2 * spread, blocked_2);
         }
     }
-
-    ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
 }
 
 static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
@@ -376,126 +337,72 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
     float abs_x = fabsf(acc_x);
     float abs_y = fabsf(acc_y);
     
-    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
-        ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
-        return;
-    }
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) return;
 
-    // FIX: Replaced broken coordinate-locked viscosity with organic random per-particle skipping
-    if (rand() % 3 != 0) {
-        ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
-        return;
-    }
+    if (rand() % 5 == 0) return; // Fix: Fast 20% skip chance for viscosity
 
-    int sign_x = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
-    int sign_y = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
+    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
+    int prim_dx = 0, prim_dy = 0, sec_dx = 0, sec_dy = 0, tert_dx = 0, tert_dy = 0, sprint_dx = 0, sprint_dy = 0;
+    int side_step;
 
     if (abs_y >= abs_x) {
-        prim_dx = 0;             prim_dy = sign_y;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = -sign_x;       tert_dy = sign_y;
-        sprint_dx = 1;           sprint_dy = 0;
+        prim_dy = sign_y;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = -sign_x; tert_dy = sign_y;
+        sprint_dx = 1;
+        side_step = (y % 2 == 0) ? 1 : -1;
     } else {
-        prim_dx = sign_x;        prim_dy = 0;
-        sec_dx  = sign_x;        sec_dy  = sign_y;
-        tert_dx = sign_x;        tert_dy = -sign_y;
-        sprint_dx = 0;           sprint_dy = 1;
+        prim_dx = sign_x;
+        sec_dx  = sign_x;  sec_dy  = sign_y;
+        tert_dx = sign_x;  tert_dy = -sign_y;
+        sprint_dy = 1;
+        side_step = (x % 2 == 0) ? 1 : -1;
     }
 
     if (abs_y >= abs_x && sign_x == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dx = r; tert_dx = -r;
+        sec_dx = side_step; tert_dx = -side_step;
     } else if (abs_x > abs_y && sign_y == 0) {
-        int r = (rand() % 2 == 0) ? 1 : -1;
-        sec_dy = r; tert_dy = -r;
+        sec_dy = side_step; tert_dy = -side_step;
     }
 
-    if (prim_dx != 0 || prim_dy != 0) {
-        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (sec_dx != 0 || sec_dy != 0) {
-        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
-
-    if (tert_dx != 0 || tert_dy != 0) {
-        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
-        {
-            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
-            return;
-        }
-    }
+    if (prim_dx != 0 || prim_dy != 0) { TRY_MOVE(prim_dx, prim_dy); }
+    if (sec_dx != 0 || sec_dy != 0) { TRY_MOVE(sec_dx, sec_dy); }
+    if (tert_dx != 0 || tert_dy != 0) { TRY_MOVE(tert_dx, tert_dy); }
 
     int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
     int max_spread = 1;
+    bool allow_reverse = true;
 
     if (sprint_dir_1 == 0) {
-        sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
+        sprint_dir_1 = side_step; 
         max_spread = 1; 
+        allow_reverse = false;
     } else {
         float lateral_acc = (abs_y >= abs_x) ? abs_x : abs_y;
-        if (lateral_acc > 0.3f) max_spread = 2; 
-        else max_spread = 1;
+        max_spread = (lateral_acc > 0.4f) ? 2 : 1;
     }
 
     int sprint_dir_2 = -sprint_dir_1;
     bool blocked_1 = false;
-    bool blocked_2 = false;
+    bool blocked_2 = !allow_reverse;
 
     for (int spread = 1; spread <= max_spread; spread++) {
         if (!blocked_1) {
-            int cx1 = x + sprint_dx * sprint_dir_1 * spread;
-            int cy1 = y + sprint_dy * sprint_dir_1 * spread;
-            if (cx1 > 0 && cx1 < GRID_WIDTH - 1 && cy1 > 0 && cy1 < GRID_HEIGHT - 1) {
-                if (ctx->current_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx1, cy1)] = CELL_TYPE_PARTICLE; 
-                    return;
-                } else {
-                    blocked_1 = true;
-                }
-            } else { blocked_1 = true; }
+            TRY_SPRINT(sprint_dx * sprint_dir_1 * spread, sprint_dy * sprint_dir_1 * spread, blocked_1);
         }
-
         if (!blocked_2) {
-            int cx2 = x + sprint_dx * sprint_dir_2 * spread;
-            int cy2 = y + sprint_dy * sprint_dir_2 * spread;
-            if (cx2 > 0 && cx2 < GRID_WIDTH - 1 && cy2 > 0 && cy2 < GRID_HEIGHT - 1) {
-                if (ctx->current_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx2, cy2)] = CELL_TYPE_PARTICLE; 
-                    return;
-                } else {
-                    blocked_2 = true;
-                }
-            } else { blocked_2 = true; }
+            TRY_SPRINT(sprint_dx * sprint_dir_2 * spread, sprint_dy * sprint_dir_2 * spread, blocked_2);
         }
     }
 
     if (rand() % 4 == 0) {
-        int climb_x = x - prim_dx;
-        int climb_y = y - prim_dy;
+        int climb_x = -prim_dx;
+        int climb_y = -prim_dy;
 
-        if (climb_x > 0 && climb_x < GRID_WIDTH - 1 && climb_y > 0 && climb_y < GRID_HEIGHT - 1) {
-            if (ctx->current_grid[CELL(climb_x, climb_y)] == CELL_TYPE_AIR &&
-                ctx->next_grid[CELL(climb_x, climb_y)] == CELL_TYPE_AIR) 
-            {
-                ctx->next_grid[CELL(climb_x, climb_y)] = CELL_TYPE_PARTICLE;
-                return;
-            }
+        if (x + climb_x > 0 && x + climb_x < GRID_WIDTH - 1 && y + climb_y > 0 && y + climb_y < GRID_HEIGHT - 1) {
+            TRY_MOVE(climb_x, climb_y);
         }
     }
-
-    ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
 }
