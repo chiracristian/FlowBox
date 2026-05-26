@@ -199,54 +199,61 @@ void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
 
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
-    if (fabsf(acc_x) <= ACCELERATION_THRESHOLD && fabsf(acc_y) <= ACCELERATION_THRESHOLD) {
+    float abs_x = fabsf(acc_x);
+    float abs_y = fabsf(acc_y);
+    
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }
 
-    int dy = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
-    int dx = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
+    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    /* 1. Try primary gravity direction */
-    if (ctx->current_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR &&
-        ctx->next_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR) 
-    {
-        ctx->next_grid[CELL(x + dx, y + dy)] = CELL_TYPE_PARTICLE;
-        return;
+    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy;
+
+    if (abs_y >= abs_x) {
+        prim_dx = 0;             prim_dy = sign_y;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = -sign_x;       tert_dy = sign_y;
+    } else {
+        prim_dx = sign_x;        prim_dy = 0;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = sign_x;        tert_dy = -sign_y;
     }
 
-    /* 2. Slide relative to the gravity vector */
-    int side_step = (rand() % 2 == 0) ? 1 : -1;
+    if (abs_y >= abs_x && sign_x == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dx = r; tert_dx = -r;
+    } else if (abs_x > abs_y && sign_y == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dy = r; tert_dy = -r;
+    }
 
-    if (dx != 0 && dy != 0) { 
-        if (side_step == 1) {
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-        } else {
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
+    if (prim_dx != 0 || prim_dy != 0) {
+        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
+            return;
         }
-    } else if (dy != 0) { 
-        if (ctx->current_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
+    }
+
+    if (sec_dx != 0 || sec_dy != 0) {
+        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
+            return;
         }
-        if (ctx->current_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x - side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
-        }
-    } else if (dx != 0) { 
-        if (ctx->current_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y + side_step)] = CELL_TYPE_PARTICLE; return;
-        }
-        if (ctx->current_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y - side_step)] = CELL_TYPE_PARTICLE; return;
+    }
+
+    if (tert_dx != 0 || tert_dy != 0) {
+        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
+            return;
         }
     }
 
@@ -255,89 +262,98 @@ static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, floa
 
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
-    if (fabsf(acc_x) <= ACCELERATION_THRESHOLD && fabsf(acc_y) <= ACCELERATION_THRESHOLD) {
+    float abs_x = fabsf(acc_x);
+    float abs_y = fabsf(acc_y);
+    
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }
 
-    int dy = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
-    int dx = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
+    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    /* 1. Try primary gravity direction */
-    if (ctx->current_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR &&
-        ctx->next_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR) 
-    {
-        ctx->next_grid[CELL(x + dx, y + dy)] = CELL_TYPE_PARTICLE;
-        return;
+    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
+
+    if (abs_y >= abs_x) {
+        prim_dx = 0;             prim_dy = sign_y;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = -sign_x;       tert_dy = sign_y;
+        sprint_dx = 1;           sprint_dy = 0;
+    } else {
+        prim_dx = sign_x;        prim_dy = 0;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = sign_x;        tert_dy = -sign_y;
+        sprint_dx = 0;           sprint_dy = 1;
     }
 
-    /* 2. Slide relative to the gravity vector */
-    int side_step = (rand() % 2 == 0) ? 1 : -1;
+    if (abs_y >= abs_x && sign_x == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dx = r; tert_dx = -r;
+    } else if (abs_x > abs_y && sign_y == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dy = r; tert_dy = -r;
+    }
 
-    if (dx != 0 && dy != 0) { 
-        if (side_step == 1) {
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-        } else {
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
-        }
-    } else if (dy != 0) { 
-        if (ctx->current_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
-        }
-        if (ctx->current_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x - side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
-        }
-    } else if (dx != 0) { 
-        if (ctx->current_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y + side_step)] = CELL_TYPE_PARTICLE; return;
-        }
-        if (ctx->current_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y - side_step)] = CELL_TYPE_PARTICLE; return;
+    if (prim_dx != 0 || prim_dy != 0) {
+        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
+            return;
         }
     }
 
-    /* 3. Fluid Sprint with anti-teleportation limits */
-    int perp_dx = 0, perp_dy = 0;
-    if (dy != 0 && dx == 0) { perp_dx = 1; perp_dy = 0; }
-    else if (dx != 0 && dy == 0) { perp_dx = 0; perp_dy = 1; }
-    else { perp_dx = dx; perp_dy = -dy; } 
+    if (sec_dx != 0 || sec_dy != 0) {
+        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
+            return;
+        }
+    }
 
-    bool blocked_dir1 = false;
-    bool blocked_dir2 = false;
+    if (tert_dx != 0 || tert_dy != 0) {
+        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
+            return;
+        }
+    }
 
-    for (int spread = 1; spread <= 3; spread++) {
-        if (!blocked_dir1) {
-            int cx1 = x + (perp_dx * side_step * spread);
-            int cy1 = y + (perp_dy * side_step * spread);
+    int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
+    if (sprint_dir_1 == 0) sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
+    int sprint_dir_2 = -sprint_dir_1;
+
+    bool blocked_1 = false;
+    bool blocked_2 = false;
+
+    for (int spread = 1; spread <= 5; spread++) {
+        if (!blocked_1) {
+            int cx1 = x + sprint_dx * sprint_dir_1 * spread;
+            int cy1 = y + sprint_dy * sprint_dir_1 * spread;
             if (cx1 > 0 && cx1 < GRID_WIDTH - 1 && cy1 > 0 && cy1 < GRID_HEIGHT - 1) {
                 if (ctx->current_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx1, cy1)] = CELL_TYPE_PARTICLE; return;
+                    ctx->next_grid[CELL(cx1, cy1)] = CELL_TYPE_PARTICLE; 
+                    return;
                 } else {
-                    blocked_dir1 = true;
+                    blocked_1 = true;
                 }
-            } else { blocked_dir1 = true; }
+            } else { blocked_1 = true; }
         }
 
-        if (!blocked_dir2) {
-            int cx2 = x - (perp_dx * side_step * spread);
-            int cy2 = y - (perp_dy * side_step * spread);
+        if (!blocked_2) {
+            int cx2 = x + sprint_dx * sprint_dir_2 * spread;
+            int cy2 = y + sprint_dy * sprint_dir_2 * spread;
             if (cx2 > 0 && cx2 < GRID_WIDTH - 1 && cy2 > 0 && cy2 < GRID_HEIGHT - 1) {
                 if (ctx->current_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR) {
-                    ctx->next_grid[CELL(cx2, cy2)] = CELL_TYPE_PARTICLE; return;
+                    ctx->next_grid[CELL(cx2, cy2)] = CELL_TYPE_PARTICLE; 
+                    return;
                 } else {
-                    blocked_dir2 = true;
+                    blocked_2 = true;
                 }
-            } else { blocked_dir2 = true; }
+            } else { blocked_2 = true; }
         }
     }
 
@@ -346,7 +362,10 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
 
 static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
-    if (fabsf(acc_x) <= ACCELERATION_THRESHOLD && fabsf(acc_y) <= ACCELERATION_THRESHOLD) {
+    float abs_x = fabsf(acc_x);
+    float abs_y = fabsf(acc_y);
+    
+    if (abs_x <= ACCELERATION_THRESHOLD && abs_y <= ACCELERATION_THRESHOLD) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }
@@ -361,59 +380,96 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         return;
     }
 
-    int dy = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
-    int dx = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
+    int sign_x = (acc_x > 0.0f) ? 1 : ((acc_x < 0.0f) ? -1 : 0);
+    int sign_y = (acc_y > 0.0f) ? 1 : ((acc_y < 0.0f) ? -1 : 0);
 
-    /* 1. Try primary gravity direction */
-    if (ctx->current_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR &&
-        ctx->next_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR) 
-    {
-        ctx->next_grid[CELL(x + dx, y + dy)] = CELL_TYPE_PARTICLE;
-        return;
+    int prim_dx, prim_dy, sec_dx, sec_dy, tert_dx, tert_dy, sprint_dx, sprint_dy;
+
+    if (abs_y >= abs_x) {
+        prim_dx = 0;             prim_dy = sign_y;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = -sign_x;       tert_dy = sign_y;
+        sprint_dx = 1;           sprint_dy = 0;
+    } else {
+        prim_dx = sign_x;        prim_dy = 0;
+        sec_dx  = sign_x;        sec_dy  = sign_y;
+        tert_dx = sign_x;        tert_dy = -sign_y;
+        sprint_dx = 0;           sprint_dy = 1;
     }
 
-    /* 2. Slide relative to the gravity vector */
-    int side_step = (rand() % 2 == 0) ? 1 : -1;
+    if (abs_y >= abs_x && sign_x == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dx = r; tert_dx = -r;
+    } else if (abs_x > abs_y && sign_y == 0) {
+        int r = (rand() % 2 == 0) ? 1 : -1;
+        sec_dy = r; tert_dy = -r;
+    }
 
-    if (dx != 0 && dy != 0) { 
-        if (side_step == 1) {
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-        } else {
-            if (ctx->current_grid[CELL(x + dx, y)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x + dx, y)] = CELL_TYPE_PARTICLE; return;
-            }
-            if (ctx->current_grid[CELL(x, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x, y + dy)] == CELL_TYPE_AIR) {
-                ctx->next_grid[CELL(x, y + dy)] = CELL_TYPE_PARTICLE; return;
-            }
-        }
-    } else if (dy != 0) { 
-        if (ctx->current_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
-        }
-        if (ctx->current_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x - side_step, y + dy)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x - side_step, y + dy)] = CELL_TYPE_PARTICLE; return;
-        }
-    } else if (dx != 0) { 
-        if (ctx->current_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y + side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y + side_step)] = CELL_TYPE_PARTICLE; return;
-        }
-        if (ctx->current_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR && ctx->next_grid[CELL(x + dx, y - side_step)] == CELL_TYPE_AIR) {
-            ctx->next_grid[CELL(x + dx, y - side_step)] = CELL_TYPE_PARTICLE; return;
+    if (prim_dx != 0 || prim_dy != 0) {
+        if (ctx->current_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + prim_dx, y + prim_dy)] = CELL_TYPE_PARTICLE;
+            return;
         }
     }
 
-    /* 3. Viscous Magma Creep Rule (climbing against gravity) */
+    if (sec_dx != 0 || sec_dy != 0) {
+        if (ctx->current_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + sec_dx, y + sec_dy)] = CELL_TYPE_PARTICLE;
+            return;
+        }
+    }
+
+    if (tert_dx != 0 || tert_dy != 0) {
+        if (ctx->current_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR &&
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] == CELL_TYPE_AIR) 
+        {
+            ctx->next_grid[CELL(x + tert_dx, y + tert_dy)] = CELL_TYPE_PARTICLE;
+            return;
+        }
+    }
+
+    int sprint_dir_1 = (abs_y >= abs_x) ? sign_x : sign_y;
+    if (sprint_dir_1 == 0) sprint_dir_1 = (rand() % 2 == 0) ? 1 : -1;
+    int sprint_dir_2 = -sprint_dir_1;
+
+    bool blocked_1 = false;
+    bool blocked_2 = false;
+
+    for (int spread = 1; spread <= 2; spread++) {
+        if (!blocked_1) {
+            int cx1 = x + sprint_dx * sprint_dir_1 * spread;
+            int cy1 = y + sprint_dy * sprint_dir_1 * spread;
+            if (cx1 > 0 && cx1 < GRID_WIDTH - 1 && cy1 > 0 && cy1 < GRID_HEIGHT - 1) {
+                if (ctx->current_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx1, cy1)] == CELL_TYPE_AIR) {
+                    ctx->next_grid[CELL(cx1, cy1)] = CELL_TYPE_PARTICLE; 
+                    return;
+                } else {
+                    blocked_1 = true;
+                }
+            } else { blocked_1 = true; }
+        }
+
+        if (!blocked_2) {
+            int cx2 = x + sprint_dx * sprint_dir_2 * spread;
+            int cy2 = y + sprint_dy * sprint_dir_2 * spread;
+            if (cx2 > 0 && cx2 < GRID_WIDTH - 1 && cy2 > 0 && cy2 < GRID_HEIGHT - 1) {
+                if (ctx->current_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR && ctx->next_grid[CELL(cx2, cy2)] == CELL_TYPE_AIR) {
+                    ctx->next_grid[CELL(cx2, cy2)] = CELL_TYPE_PARTICLE; 
+                    return;
+                } else {
+                    blocked_2 = true;
+                }
+            } else { blocked_2 = true; }
+        }
+    }
+
     if (rand() % 4 == 0) {
-        int climb_dx = -dx; 
-        int climb_dy = -dy;
-        
-        int climb_x = x + climb_dx + (dy != 0 ? side_step : 0);
-        int climb_y = y + climb_dy + (dx != 0 ? side_step : 0);
+        int climb_x = x - prim_dx;
+        int climb_y = y - prim_dy;
 
         if (climb_x > 0 && climb_x < GRID_WIDTH - 1 && climb_y > 0 && climb_y < GRID_HEIGHT - 1) {
             if (ctx->current_grid[CELL(climb_x, climb_y)] == CELL_TYPE_AIR &&
