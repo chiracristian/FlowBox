@@ -210,31 +210,65 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
             break;
     }
 
-    uint16_t air_color = blend_channel_profile(COLOR_DARK_AIR, COLOR_LIGHT_AIR, theme_val);
-    uint16_t wall_color = blend_channel_profile(COLOR_DARK_WALL, COLOR_LIGHT_WALL, theme_val);
-    uint16_t particle_color = blend_channel_profile(dark_particle, light_particle, theme_val);
+    uint16_t air_base    = blend_channel_profile(COLOR_DARK_AIR, COLOR_LIGHT_AIR, theme_val);
+    uint16_t wall_base   = blend_channel_profile(COLOR_DARK_WALL, COLOR_LIGHT_WALL, theme_val);
+    uint16_t part_base   = blend_channel_profile(dark_particle, light_particle, theme_val);
 
-    uint16_t color_lut[3] = {
-        [CELL_TYPE_AIR]      = air_color,
-        [CELL_TYPE_WALL]     = wall_color,
-        [CELL_TYPE_PARTICLE] = particle_color
-    };
-
-    uint32_t row_buffer[GRID_WIDTH]; 
+    uint8_t air_r  = UNPACK_R(air_base),  air_g  = UNPACK_G(air_base),  air_b  = UNPACK_B(air_base);
+    uint8_t wall_r = UNPACK_R(wall_base), wall_g = UNPACK_G(wall_base), wall_b = UNPACK_B(wall_base);
+    uint8_t part_r = UNPACK_R(part_base), part_g = UNPACK_G(part_base), part_b = UNPACK_B(part_base);
 
     for (int y = 0; y < GRID_HEIGHT; y++) {
         int source_cell_row = y * GRID_WIDTH;
+        uint16_t target_row_buffer[GRID_WIDTH * 2];
 
         for (int x = 0; x < GRID_WIDTH; x++) {
-            uint16_t color = color_lut[grid_buffer[source_cell_row + x]];
-            row_buffer[x] = (color << 16) | color; 
+            uint8_t cell = grid_buffer[source_cell_row + x];
+            uint8_t r = 0, g = 0, b = 0;
+            int max_noise = 0;
+
+            switch (cell) {
+                case CELL_TYPE_WALL:
+                    r = wall_r; g = wall_g; b = wall_b;
+                    max_noise = NOISE_INTENSITY_WALL; 
+                    break;
+                case CELL_TYPE_PARTICLE:
+                    r = part_r; g = part_g; b = part_b;
+                    max_noise = NOISE_INTENSITY_PARTICLE; 
+                    break;
+                case CELL_TYPE_AIR:
+                default:
+                    r = air_r; g = air_g; b = air_b;
+                    max_noise = NOISE_INTENSITY_AIR; 
+                    break;
+            }
+
+            uint32_t hash = ((uint32_t)x * HASH_PRIME_X) ^ ((uint32_t)y * HASH_PRIME_Y);
+            hash = (hash ^ (hash >> HASH_SHIFT_WORD)) * HASH_MIX_STAGE_1;
+            hash = (hash ^ (hash >> HASH_SHIFT_SHORT)) * HASH_MIX_STAGE_2;
+            hash = hash ^ (hash >> HASH_SHIFT_WORD);
+
+            int noise = ((int)(hash % (max_noise * 2 + 1))) - max_noise;
+
+            int mixed_r = r + noise;
+            int mixed_g = g + noise;
+            int mixed_b = b + noise;
+
+            if (mixed_r < CHANNEL_MIN_VAL) mixed_r = CHANNEL_MIN_VAL; else if (mixed_r > CHANNEL_MAX_VAL) mixed_r = CHANNEL_MAX_VAL;
+            if (mixed_g < CHANNEL_MIN_VAL) mixed_g = CHANNEL_MIN_VAL; else if (mixed_g > CHANNEL_MAX_VAL) mixed_g = CHANNEL_MAX_VAL;
+            if (mixed_b < CHANNEL_MIN_VAL) mixed_b = CHANNEL_MIN_VAL; else if (mixed_b > CHANNEL_MAX_VAL) mixed_b = CHANNEL_MAX_VAL;
+
+            uint16_t final_color = PACK_RGB565((uint8_t)mixed_r, (uint8_t)mixed_g, (uint8_t)mixed_b);
+
+            target_row_buffer[x * 2]     = final_color;
+            target_row_buffer[x * 2 + 1] = final_color;
         }
 
         int target_pixel_row_0 = (y * 2) * LCD_H_RES;
         int target_pixel_row_1 = ((y * 2) + 1) * LCD_H_RES;
 
-        memcpy(&fb[target_pixel_row_0], row_buffer, sizeof(row_buffer));
-        memcpy(&fb[target_pixel_row_1], row_buffer, sizeof(row_buffer));
+        memcpy(&fb[target_pixel_row_0], target_row_buffer, sizeof(target_row_buffer));
+        memcpy(&fb[target_pixel_row_1], target_row_buffer, sizeof(target_row_buffer));
     }
 
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, fb);
