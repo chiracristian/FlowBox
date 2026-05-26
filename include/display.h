@@ -22,7 +22,7 @@
 #define HASH_SHIFT_WORD             16
 
 /* Texture Grain Intensities (Maximum Deviations) */
-#define NOISE_INTENSITY_AIR         2
+#define NOISE_INTENSITY_AIR         1
 #define NOISE_INTENSITY_WALL        14
 #define NOISE_INTENSITY_PARTICLE    30
 
@@ -30,19 +30,19 @@
 #define CHANNEL_MIN_VAL             0
 #define CHANNEL_MAX_VAL             255
 
-/* Dark theme color targets (lux_factor = 0.0) */
-#define COLOR_DARK_AIR              0x0000    
-#define COLOR_DARK_WALL             0x3186    
-#define COLOR_DARK_SAND             0xED60    
-#define COLOR_DARK_WATER            0x1B3D    
-#define COLOR_DARK_LAVA             0xE100    
+// --- DARK THEME COLOR PALETTE TARGETS (lux_factor = 0.0) --- 
+#define COLOR_DARK_AIR              0x0000    // Pitch black space
+#define COLOR_DARK_WALL             0xBDD7    // Clean, crisp light slate gray
+#define COLOR_DARK_SAND             0xED60    // Warm glowing desert gold
+#define COLOR_DARK_WATER            0x1B3D    // Deep deep ocean blue
+#define COLOR_DARK_LAVA             0xE100    // High-contrast neon magma orange
 
-/* Light theme color targets (lux_factor = 1.0) */
-#define COLOR_LIGHT_AIR             0xF7F4   
-#define COLOR_LIGHT_WALL            0x52AA    
-#define COLOR_LIGHT_SAND            0xBC44    
-#define COLOR_LIGHT_WATER           0x3416    
-#define COLOR_LIGHT_LAVA            0xD204    
+// --- LIGHT THEME COLOR PALETTE TARGETS (lux_factor = 1.0) --- 
+#define COLOR_LIGHT_AIR             0xE71C    // Clean, modern soft light gray
+#define COLOR_LIGHT_WALL            0x3186    // Solid, structural dark charcoal gray
+#define COLOR_LIGHT_SAND            0xE647    // Rich, vibrant amber/terracotta gold
+#define COLOR_LIGHT_WATER           0x145F    // Brilliant, clean Mediterranean cyan-blue
+#define COLOR_LIGHT_LAVA            0xF142    // Intense, luminous neon magma scarlet
 
 /**
  * Initializes the ST7701 LCD controller over 3-wire SPI, configures the 14-bit
