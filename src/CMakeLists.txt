@@ -6,6 +6,7 @@ idf_component_register(
         "i2c.c"
         "particle_grid.c"
         "storage.c"
+        "lcd_bl_pwm_bsp.c"
     INCLUDE_DIRS 
         "."
 )
