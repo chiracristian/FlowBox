@@ -45,8 +45,8 @@ typedef struct {
     float gyro_z; 
 } i2c_imu_data_t;
 
-#define ACC_X_OFFSET -0.03f
-#define ACC_Y_OFFSET -0.08f
+#define ACC_X_OFFSET -0.04f
+#define ACC_Y_OFFSET -0.07f
 #define ACC_Z_OFFSET -0.02f
 
 // Function Prototypes

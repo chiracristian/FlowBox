@@ -16,7 +16,7 @@
 #define CELL_TYPE_WALL              0x01
 #define CELL_TYPE_PARTICLE          0x02
 
-#define ACCELERATION_THRESHOLD      0.15f
+#define ACCELERATION_THRESHOLD      0.05f
 
 typedef enum {
     SIM_RULE_SAND = 0,

@@ -64,7 +64,7 @@ void app_main(void)
     }
 
     particle_grid_init(&grid_ctx);
-    particle_grid_spawn_triangle(&grid_ctx, 60, 80, 40, 30);
+    particle_grid_spawn_triangle(&grid_ctx, 60, 80, 40, 50);
 
     // Initialize the button hardware and pass the physics context
     button_init(&grid_ctx);
