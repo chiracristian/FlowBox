@@ -207,7 +207,7 @@ esp_err_t display_init(void)
             GPIO_NUM_17, GPIO_NUM_46, GPIO_NUM_3,  GPIO_NUM_8,  GPIO_NUM_18, 
         },
         .timings = {
-            .pclk_hz = 14 * 1000 * 1000,
+            .pclk_hz = 8 * 1000 * 1000,
             .h_res = LCD_H_RES,
             .v_res = LCD_V_RES,
             .hsync_back_porch = 30,
@@ -289,8 +289,11 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
 
     for (int y = 0; y < GRID_HEIGHT; y++) {
         int source_cell_row = y * GRID_WIDTH;
-        uint32_t *target_row_fb0 = (uint32_t *)&fb[(y * 2) * LCD_H_RES];
-        uint32_t *target_row_fb1 = (uint32_t *)&fb[((y * 2) + 1) * LCD_H_RES];
+        
+        uint32_t *target_row_fb0 = (uint32_t *)&fb[(y * 4) * LCD_H_RES];
+        uint32_t *target_row_fb1 = (uint32_t *)&fb[((y * 4) + 1) * LCD_H_RES];
+        uint32_t *target_row_fb2 = (uint32_t *)&fb[((y * 4) + 2) * LCD_H_RES];
+        uint32_t *target_row_fb3 = (uint32_t *)&fb[((y * 4) + 3) * LCD_H_RES];
 
         for (int x = 0; x < GRID_WIDTH; x++) {
             uint8_t cell = grid_buffer[source_cell_row + x];
@@ -305,8 +308,19 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
                 packed_double_pixel = wall_texture_lut[idx];
             }
 
-            target_row_fb0[x] = packed_double_pixel;
-            target_row_fb1[x] = packed_double_pixel;
+            int dest_x = x * 2;
+            
+            target_row_fb0[dest_x]     = packed_double_pixel;
+            target_row_fb0[dest_x + 1] = packed_double_pixel;
+            
+            target_row_fb1[dest_x]     = packed_double_pixel;
+            target_row_fb1[dest_x + 1] = packed_double_pixel;
+            
+            target_row_fb2[dest_x]     = packed_double_pixel;
+            target_row_fb2[dest_x + 1] = packed_double_pixel;
+            
+            target_row_fb3[dest_x]     = packed_double_pixel;
+            target_row_fb3[dest_x + 1] = packed_double_pixel;
         }
     }
 
@@ -314,3 +328,4 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
 
     current_fb_idx = !current_fb_idx;
 }
+

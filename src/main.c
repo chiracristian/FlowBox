@@ -67,7 +67,7 @@ void app_main(void)
     }
 
     particle_grid_init(&grid_ctx);
-    particle_grid_spawn_triangle(&grid_ctx, 30, 80, 100, 50);
+    particle_grid_spawn_triangle(&grid_ctx, 30, 40, 20, 30);
 
     button_init(&grid_ctx);
 

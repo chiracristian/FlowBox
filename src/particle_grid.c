@@ -3,32 +3,32 @@
 #include <stdlib.h>
 #include <math.h>
 
-/* Thick Map Layout Geometry Configurations (Min 2-4 units thick to prevent tunneling) */
-#define FUNNEL_TOP_Y            70
-#define FUNNEL_BOTTOM_Y         100
-#define FUNNEL_OPENING_HALF     8
-#define WALL_THICKNESS          2
+/* Map Layout Geometry Scaled for 80x205 Grid */
+#define FUNNEL_TOP_Y            35
+#define FUNNEL_BOTTOM_Y         50
+#define FUNNEL_OPENING_HALF     4
+#define WALL_THICKNESS          1
 
-#define PEG_ROW_1_Y             150
-#define PEG_ROW_2_Y             190
-#define PEG_SPACING_X           24
-#define PEG_OFFSET_X            12
-#define PEG_SIZE                3 
+#define PEG_ROW_1_Y             75
+#define PEG_ROW_2_Y             95
+#define PEG_SPACING_X           12
+#define PEG_OFFSET_X            6
+#define PEG_SIZE                2 
 
-#define BASIN_LEFT_X            35
-#define BASIN_RIGHT_X           125
-#define BASIN_Y                 270
-#define BASIN_HEIGHT            30
-#define BASIN_THICKNESS         3
+#define BASIN_LEFT_X            17
+#define BASIN_RIGHT_X           62
+#define BASIN_Y                 135
+#define BASIN_HEIGHT            15
+#define BASIN_THICKNESS         2
 
-#define SEPARATOR_X             80
-#define SEPARATOR_START_Y       320
-#define SEPARATOR_END_Y         390
-#define SEPARATOR_THICKNESS     4
+#define SEPARATOR_X             40
+#define SEPARATOR_START_Y       160
+#define SEPARATOR_END_Y         195
+#define SEPARATOR_THICKNESS     2
 
-/* Speed/Substepping Configurations */
-#define WATER_SUBSTEPS          3 
-#define SAND_SUBSTEPS           2 
+/* Vastly increased substepping limits for smoother ASMR fluid physics */
+#define WATER_SUBSTEPS          5 
+#define SAND_SUBSTEPS           3 
 
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
@@ -197,10 +197,6 @@ void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
     }
 }
 
-// ============================================================================
-// CORE SIMULATION KERNELS
-// ============================================================================
-
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
     if (fabsf(acc_x) <= ACCELERATION_THRESHOLD && fabsf(acc_y) <= ACCELERATION_THRESHOLD) {
@@ -276,7 +272,6 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
         return;
     }
 
-    /* Enhanced Lateral Fluid Dispersion Loop (Allows water to sprint sideways up to 3 units) */
     for (int spread = 1; spread <= 3; spread++) {
         int check_x_right = x + (side_step * spread);
         if (check_x_right > 0 && check_x_right < GRID_WIDTH - 1) {
@@ -314,8 +309,7 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         viscosity_divider++;
     }
 
-    /* Viscosity skip rate reduced from 6 to 3 to make it noticeably faster than before */
-    if ((viscosity_divider % 3) != 0) {
+    if ((viscosity_divider % 2) != 0) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }

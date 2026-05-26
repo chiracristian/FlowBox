@@ -5,8 +5,8 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-#define GRID_WIDTH                  160
-#define GRID_HEIGHT                 410
+#define GRID_WIDTH                  80
+#define GRID_HEIGHT                 205
 #define GRID_SIZE                   (GRID_WIDTH * GRID_HEIGHT)
 
 // Macro to linearize 2D coordinates into a 1D array index
