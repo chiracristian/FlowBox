@@ -15,10 +15,6 @@ static SemaphoreHandle_t vsync_sem = NULL;
 static uint16_t *fb_buffers[2] = {NULL, NULL};
 static int current_fb_idx = 0;
 
-#define COLOR_BLACK  0x0000
-#define COLOR_GRAY   0x7BEF
-#define COLOR_YELLOW 0xFDE0
-
 static const st7701_lcd_init_cmd_t lcd_init_cmds[] = {
     {0xFF, (uint8_t []){0x77, 0x01, 0x00, 0x00, 0x13}, 5, 0},
     {0xEF, (uint8_t []){0x08}, 1, 0},
@@ -75,6 +71,23 @@ static bool display_on_vsync_handler(esp_lcd_panel_handle_t panel, const esp_lcd
     return high_task_awoken == pdTRUE;
 }
 
+static inline uint16_t blend_channel_profile(uint16_t c_dark, uint16_t c_light, float factor)
+{
+    uint8_t r_d = UNPACK_R(c_dark);
+    uint8_t g_d = UNPACK_G(c_dark);
+    uint8_t b_d = UNPACK_B(c_dark);
+
+    uint8_t r_l = UNPACK_R(c_light);
+    uint8_t g_l = UNPACK_G(c_light);
+    uint8_t b_l = UNPACK_B(c_light);
+
+    uint8_t r_mixed = (uint8_t)(r_d + (r_l - r_d) * factor);
+    uint8_t g_mixed = (uint8_t)(g_d + (g_l - g_d) * factor);
+    uint8_t b_mixed = (uint8_t)(b_d + (b_l - b_d) * factor);
+
+    return PACK_RGB565(r_mixed, g_mixed, b_mixed);
+}
+
 esp_err_t display_init(void)
 {
     lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
@@ -99,7 +112,6 @@ esp_err_t display_init(void)
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT,
-        // The safety buffer allocated in fast internal SRAM protects pixel data delivery
         .bounce_buffer_size_px = 10 * LCD_H_RES,  
         .num_fbs = 2,
         .data_width = 16,
@@ -168,7 +180,7 @@ esp_err_t display_init(void)
     return ESP_OK;
 }
 
-void display_render_grid(const uint8_t *grid_buffer)
+void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, float theme_val)
 {
     if (panel_handle == NULL || grid_buffer == NULL) return;
 
@@ -179,10 +191,33 @@ void display_render_grid(const uint8_t *grid_buffer)
     uint16_t *fb = fb_buffers[current_fb_idx];
     if (fb == NULL) return;
 
-    static const uint16_t color_lut[3] = {
-        [CELL_TYPE_AIR]      = COLOR_BLACK,
-        [CELL_TYPE_WALL]     = COLOR_GRAY,
-        [CELL_TYPE_PARTICLE] = COLOR_YELLOW 
+    uint16_t dark_particle = COLOR_DARK_SAND;
+    uint16_t light_particle = COLOR_LIGHT_SAND;
+
+    switch (active_rule) {
+        case SIM_RULE_WATER:
+            dark_particle = COLOR_DARK_WATER;
+            light_particle = COLOR_LIGHT_WATER;
+            break;
+        case SIM_RULE_LAVA:
+            dark_particle = COLOR_DARK_LAVA;
+            light_particle = COLOR_LIGHT_LAVA;
+            break;
+        case SIM_RULE_SAND:
+        default:
+            dark_particle = COLOR_DARK_SAND;
+            light_particle = COLOR_LIGHT_SAND;
+            break;
+    }
+
+    uint16_t air_color = blend_channel_profile(COLOR_DARK_AIR, COLOR_LIGHT_AIR, theme_val);
+    uint16_t wall_color = blend_channel_profile(COLOR_DARK_WALL, COLOR_LIGHT_WALL, theme_val);
+    uint16_t particle_color = blend_channel_profile(dark_particle, light_particle, theme_val);
+
+    uint16_t color_lut[3] = {
+        [CELL_TYPE_AIR]      = air_color,
+        [CELL_TYPE_WALL]     = wall_color,
+        [CELL_TYPE_PARTICLE] = particle_color
     };
 
     uint32_t row_buffer[GRID_WIDTH]; 

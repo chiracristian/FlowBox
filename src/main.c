@@ -14,6 +14,9 @@ static particle_grid_context_t grid_ctx;
 static i2c_imu_data_t sim_motion_frame;
 static i2c_imu_data_t log_motion_frame;
 
+static volatile float current_theme_param = 0.0f;
+#define LIGHT_THEME_LUX 35.f
+
 static void simulation_task(void *pvParameters)
 {
     while (1) {
@@ -22,7 +25,7 @@ static void simulation_task(void *pvParameters)
         }
 
         const uint8_t *render_source = particle_grid_get_render_buffer(&grid_ctx);
-        display_render_grid(render_source);
+        display_render_grid(render_source, grid_ctx.active_rule_type, current_theme_param);
     }
 }
 
@@ -64,9 +67,8 @@ void app_main(void)
     }
 
     particle_grid_init(&grid_ctx);
-    particle_grid_spawn_triangle(&grid_ctx, 60, 80, 40, 50);
+    particle_grid_spawn_triangle(&grid_ctx, 30, 80, 100, 50);
 
-    // Initialize the button hardware and pass the physics context
     button_init(&grid_ctx);
 
     xTaskCreatePinnedToCore(simulation_task, "sim_task", 4096, NULL, 5, NULL, 1);
@@ -83,6 +85,13 @@ void app_main(void)
         esp_err_t imu_status = i2c_sensor_read_imu(&log_motion_frame);
         esp_err_t lux_status = i2c_sensor_read_light(&current_ambient_lux, &raw_ch0, &raw_ch1);
 
+        if (lux_status == ESP_OK) {
+            float param = current_ambient_lux / LIGHT_THEME_LUX;
+            if (param > 1.0f) param = 1.0f;
+            if (param < 0.0f) param = 0.0f;
+            current_theme_param = param;
+        }
+
         printf("[%lld ms] ", time_ms);
         
         if (imu_status == ESP_OK) {
@@ -95,8 +104,8 @@ void app_main(void)
         }
 
         if (lux_status == ESP_OK) {
-            printf("Light: [%.2f lux] (Raw CH0: %u, CH1: %u)\n", 
-                   current_ambient_lux, raw_ch0, raw_ch1);
+            printf("Light: [%.2f lux] (Theme: %.2f) (Raw CH0: %u, CH1: %u)\n", 
+                   current_ambient_lux, current_theme_param, raw_ch0, raw_ch1);
         } else {
             printf("Light: [ READ ERROR ]\n");
         }
