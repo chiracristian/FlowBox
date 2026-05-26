@@ -62,8 +62,6 @@ static const st7701_lcd_init_cmd_t lcd_init_cmds[] = {
     {0xE8, (uint8_t []){0x00, 0x0C}, 2, 10},
     {0xE8, (uint8_t []){0x00, 0x00}, 2, 0},
     {0xFF, (uint8_t []){0x77, 0x01, 0x00, 0x00, 0x00}, 5, 0},
-    {0x3A, (uint8_t []){0x55}, 1, 0},
-    {0x36, (uint8_t []){0x00}, 1, 0},
     {0x35, (uint8_t []){0x00}, 1, 0},
     {0x29, (uint8_t []){0x00}, 0, 20},
 };
@@ -115,7 +113,7 @@ esp_err_t display_init(void)
             GPIO_NUM_17, GPIO_NUM_46, GPIO_NUM_3,  GPIO_NUM_8,  GPIO_NUM_18, 
         },
         .timings = {
-            .pclk_hz = 18 * 1000 * 1000,
+            .pclk_hz = 14 * 1000 * 1000,
             .h_res = LCD_H_RES,
             .v_res = LCD_V_RES,
             .hsync_back_porch = 30,
@@ -174,7 +172,10 @@ void display_render_grid(const uint8_t *grid_buffer)
 {
     if (panel_handle == NULL || grid_buffer == NULL) return;
 
-    current_fb_idx = !current_fb_idx;
+    if (vsync_sem != NULL) {
+        xSemaphoreTake(vsync_sem, portMAX_DELAY);
+    }
+
     uint16_t *fb = fb_buffers[current_fb_idx];
     if (fb == NULL) return;
 
@@ -203,6 +204,5 @@ void display_render_grid(const uint8_t *grid_buffer)
 
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, fb);
 
-    // This block cleanly resolves core conflicts by handling task cadence limits safely
-    xSemaphoreTake(vsync_sem, portMAX_DELAY);
+    current_fb_idx = !current_fb_idx;
 }

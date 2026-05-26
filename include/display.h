@@ -6,6 +6,7 @@
 
 #define LCD_H_RES               320
 #define LCD_V_RES               820
+#define LCD_REFRESH_RATE        60
 
 /**
  * Initializes the ST7701 LCD controller over 3-wire SPI, configures the 16-bit

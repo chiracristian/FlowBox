@@ -21,13 +21,12 @@ static void simulation_task(void *pvParameters)
         }
 
         const uint8_t *render_source = particle_grid_get_render_buffer(&grid_ctx);
-        
-        // This function completely blocks execution until the screen completes a hardware refresh cycle
         display_render_grid(render_source);
     }
 }
 
-void app_main(void) {
+void app_main(void) 
+{
     vTaskDelay(pdMS_TO_TICKS(2000));
 
     ESP_LOGI(TAG, "===============================================");
@@ -36,6 +35,7 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Initializing hardware I2C bus lines (SDA: GPIO %d, SCL: GPIO %d)...", 
              I2C_MASTER_SDA_IO, I2C_MASTER_SCL_IO);
+    
     esp_err_t err = i2c_bus_master_init();
     if (err != ESP_OK) {
         return;
