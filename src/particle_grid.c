@@ -13,7 +13,7 @@
 #define PEG_ROW_2_Y             190
 #define PEG_SPACING_X           24
 #define PEG_OFFSET_X            12
-#define PEG_SIZE                3 // 3x3 block pegs provide an airtight collision footprint
+#define PEG_SIZE                3 
 
 #define BASIN_LEFT_X            35
 #define BASIN_RIGHT_X           125
@@ -25,6 +25,10 @@
 #define SEPARATOR_START_Y       320
 #define SEPARATOR_END_Y         390
 #define SEPARATOR_THICKNESS     4
+
+/* Speed/Substepping Configurations */
+#define WATER_SUBSTEPS          3 
+#define SAND_SUBSTEPS           2 
 
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
@@ -39,7 +43,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
 
     memset(ctx->current_grid, CELL_TYPE_AIR, GRID_SIZE);
 
-    /* Construct outer bounding container walls (2 units thick for airtight seal) */
     for (int y = 0; y < GRID_HEIGHT; y++) {
         for (int x = 0; x < GRID_WIDTH; x++) {
             if (x < WALL_THICKNESS || x >= (GRID_WIDTH - WALL_THICKNESS) || 
@@ -49,7 +52,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
-    /* 1. Upper Hourglass Funnel (Thickened horizontally to 2 units) */
     int mid_x = GRID_WIDTH / 2;
     for (int y = FUNNEL_TOP_Y; y < FUNNEL_BOTTOM_Y; y++) {
         int delta_y = y - FUNNEL_TOP_Y;
@@ -68,7 +70,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
-    /* 2. Mid-level Pachinko Peg Matrix (Row 1 - Increased to 3x3 structures) */
     for (int x = PEG_SPACING_X; x < GRID_WIDTH - WALL_THICKNESS; x += PEG_SPACING_X) {
         for (int py = 0; py < PEG_SIZE; py++) {
             for (int px = 0; px < PEG_SIZE; px++) {
@@ -77,7 +78,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
-    /* Mid-level Pachinko Peg Matrix (Row 2 - Staggered Offset 3x3 structures) */
     for (int x = PEG_OFFSET_X; x < GRID_WIDTH - WALL_THICKNESS; x += PEG_SPACING_X) {
         for (int py = 0; py < PEG_SIZE; py++) {
             for (int px = 0; px < PEG_SIZE; px++) {
@@ -86,7 +86,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
-    /* 3. Central Storage Basin (Thickened base and vertical columns to 3 units) */
     for (int x = BASIN_LEFT_X; x <= BASIN_RIGHT_X; x++) {
         for (int t = 0; t < BASIN_THICKNESS; t++) {
             ctx->current_grid[CELL(x, BASIN_Y + t)] = CELL_TYPE_WALL;
@@ -99,7 +98,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
-    /* 4. Lower Binary Splitter Wall (Thickened to 4 units width) */
     for (int y = SEPARATOR_START_Y; y < SEPARATOR_END_Y; y++) {
         for (int t = 0; t < SEPARATOR_THICKNESS; t++) {
             ctx->current_grid[CELL(SEPARATOR_X - (SEPARATOR_THICKNESS / 2) + t, y)] = CELL_TYPE_WALL;
@@ -107,7 +105,6 @@ void particle_grid_init(particle_grid_context_t *ctx)
     }
 
     memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
-
     particle_grid_set_rule(ctx, SIM_RULE_SAND);
 }
 
@@ -139,7 +136,6 @@ void particle_grid_spawn_triangle(particle_grid_context_t *ctx, uint16_t x, uint
 void particle_grid_set_rule(particle_grid_context_t *ctx, sim_rule_t target_rule)
 {
     if (ctx == NULL) return;
-
     ctx->active_rule_type = target_rule;
 
     switch (target_rule) {
@@ -162,10 +158,8 @@ const uint8_t* particle_grid_get_render_buffer(const particle_grid_context_t *ct
     return ctx->current_grid;
 }
 
-void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
+static void execute_physics_substep(particle_grid_context_t *ctx, float acc_x, float acc_y)
 {
-    if (ctx == NULL || ctx->update_particle == NULL) return;
-
     for (int i = 0; i < GRID_SIZE; i++) {
         if (ctx->current_grid[i] == CELL_TYPE_WALL) {
             ctx->next_grid[i] = CELL_TYPE_WALL;
@@ -187,13 +181,28 @@ void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
     ctx->next_grid = temp;
 }
 
+void particle_grid_step(particle_grid_context_t *ctx, float acc_x, float acc_y)
+{
+    if (ctx == NULL || ctx->update_particle == NULL) return;
+
+    int steps = 1;
+    if (ctx->active_rule_type == SIM_RULE_WATER) {
+        steps = WATER_SUBSTEPS;
+    } else if (ctx->active_rule_type == SIM_RULE_SAND) {
+        steps = SAND_SUBSTEPS;
+    }
+
+    for (int s = 0; s < steps; s++) {
+        execute_physics_substep(ctx, acc_x, acc_y);
+    }
+}
+
 // ============================================================================
-// CORE SIMULATION KERNELS (PHYSICS FUNCTION POINTERS)
+// CORE SIMULATION KERNELS
 // ============================================================================
 
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y)
 {
-    // Container Mode check: if resting flat, maintain current position with zero drift
     if (fabsf(acc_x) <= ACCELERATION_THRESHOLD && fabsf(acc_y) <= ACCELERATION_THRESHOLD) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
@@ -267,18 +276,27 @@ static void update_water_physics(particle_grid_context_t *ctx, int x, int y, flo
         return;
     }
 
-    if (ctx->current_grid[CELL(x + side_step, y)] == CELL_TYPE_AIR &&
-        ctx->next_grid[CELL(x + side_step, y)] == CELL_TYPE_AIR) 
-    {
-        ctx->next_grid[CELL(x + side_step, y)] = CELL_TYPE_PARTICLE;
-        return;
-    }
-    
-    if (ctx->current_grid[CELL(x - side_step, y)] == CELL_TYPE_AIR &&
-        ctx->next_grid[CELL(x - side_step, y)] == CELL_TYPE_AIR) 
-    {
-        ctx->next_grid[CELL(x - side_step, y)] = CELL_TYPE_PARTICLE;
-        return;
+    /* Enhanced Lateral Fluid Dispersion Loop (Allows water to sprint sideways up to 3 units) */
+    for (int spread = 1; spread <= 3; spread++) {
+        int check_x_right = x + (side_step * spread);
+        if (check_x_right > 0 && check_x_right < GRID_WIDTH - 1) {
+            if (ctx->current_grid[CELL(check_x_right, y)] == CELL_TYPE_AIR &&
+                ctx->next_grid[CELL(check_x_right, y)] == CELL_TYPE_AIR) 
+            {
+                ctx->next_grid[CELL(check_x_right, y)] = CELL_TYPE_PARTICLE;
+                return;
+            }
+        }
+
+        int check_x_left = x - (side_step * spread);
+        if (check_x_left > 0 && check_x_left < GRID_WIDTH - 1) {
+            if (ctx->current_grid[CELL(check_x_left, y)] == CELL_TYPE_AIR &&
+                ctx->next_grid[CELL(check_x_left, y)] == CELL_TYPE_AIR) 
+            {
+                ctx->next_grid[CELL(check_x_left, y)] = CELL_TYPE_PARTICLE;
+                return;
+            }
+        }
     }
 
     ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
@@ -296,7 +314,8 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         viscosity_divider++;
     }
 
-    if ((viscosity_divider % 6) != 0) {
+    /* Viscosity skip rate reduced from 6 to 3 to make it noticeably faster than before */
+    if ((viscosity_divider % 3) != 0) {
         ctx->next_grid[CELL(x, y)] = CELL_TYPE_PARTICLE;
         return;
     }
@@ -304,7 +323,6 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
     int dy = (acc_y > ACCELERATION_THRESHOLD) ? 1 : ((acc_y < -ACCELERATION_THRESHOLD) ? -1 : 0);
     int dx = (acc_x > ACCELERATION_THRESHOLD) ? 1 : ((acc_x < -ACCELERATION_THRESHOLD) ? -1 : 0);
 
-    // Standard heavy fluid checks
     if (ctx->current_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR &&
         ctx->next_grid[CELL(x + dx, y + dy)] == CELL_TYPE_AIR) 
     {
@@ -341,10 +359,8 @@ static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, floa
         return;
     }
 
-    // CHARMING EXCURSION: Viscous Magma Creep Rule
-    // If blocked on all down/lateral moves, introduce a 5% chaotic chance to surge upwards or climb walls
     if (rand() % 100 < 5) {
-        int climb_y = y - dy; // Push opposite to gravity vector direction
+        int climb_y = y - dy; 
         int climb_x = x + side_step;
 
         if (climb_y > 0 && climb_y < GRID_HEIGHT - 1 && climb_x > 0 && climb_x < GRID_WIDTH - 1) {

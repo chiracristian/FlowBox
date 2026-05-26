@@ -1,5 +1,6 @@
 #include "display.h"
 #include <string.h>
+#include <math.h>
 #include "esp_lcd_st7701.h"
 #include "esp_lcd_panel_io_additions.h"
 #include "esp_lcd_panel_ops.h"
@@ -8,12 +9,23 @@
 #include "lcd_bl_pwm_bsp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 
 static esp_lcd_panel_handle_t panel_handle = NULL;
 static SemaphoreHandle_t vsync_sem = NULL;
 
 static uint16_t *fb_buffers[2] = {NULL, NULL};
 static int current_fb_idx = 0;
+
+/* Fast 1D Texture Caches dynamically allocated in external PSRAM */
+static uint32_t *air_texture_lut = NULL;
+static uint32_t *wall_texture_lut = NULL;
+static uint32_t *sand_texture_lut = NULL;
+static uint32_t *water_texture_lut = NULL;
+static uint32_t *lava_texture_lut = NULL;
+
+static float last_cached_theme = -1.0f;
 
 static const st7701_lcd_init_cmd_t lcd_init_cmds[] = {
     {0xFF, (uint8_t []){0x77, 0x01, 0x00, 0x00, 0x13}, 5, 0},
@@ -88,8 +100,78 @@ static inline uint16_t blend_channel_profile(uint16_t c_dark, uint16_t c_light, 
     return PACK_RGB565(r_mixed, g_mixed, b_mixed);
 }
 
+static inline uint16_t generate_noise_pixel(uint8_t base_r, uint8_t base_g, uint8_t base_b, int max_noise, int x, int y)
+{
+    uint32_t hash = ((uint32_t)x * HASH_PRIME_X) ^ ((uint32_t)y * HASH_PRIME_Y);
+    hash = (hash ^ (hash >> HASH_SHIFT_WORD)) * HASH_MIX_STAGE_1;
+    hash = (hash ^ (hash >> HASH_SHIFT_SHORT)) * HASH_MIX_STAGE_2;
+    hash = hash ^ (hash >> HASH_SHIFT_WORD);
+
+    int noise = ((int)(hash % (max_noise * 2 + 1))) - max_noise;
+
+    int mixed_r = base_r + noise;
+    int mixed_g = base_g + noise;
+    int mixed_b = base_b + noise;
+
+    if (mixed_r < CHANNEL_MIN_VAL) mixed_r = CHANNEL_MIN_VAL; else if (mixed_r > CHANNEL_MAX_VAL) mixed_r = CHANNEL_MAX_VAL;
+    if (mixed_g < CHANNEL_MIN_VAL) mixed_g = CHANNEL_MIN_VAL; else if (mixed_g > CHANNEL_MAX_VAL) mixed_g = CHANNEL_MAX_VAL;
+    if (mixed_b < CHANNEL_MIN_VAL) mixed_b = CHANNEL_MIN_VAL; else if (mixed_b > CHANNEL_MAX_VAL) mixed_b = CHANNEL_MAX_VAL;
+
+    return PACK_RGB565((uint8_t)mixed_r, (uint8_t)mixed_g, (uint8_t)mixed_b);
+}
+
+static void update_texture_cache(float theme_val)
+{
+    if (!air_texture_lut) return; // Prevent writing if memory allocation failed
+
+    uint16_t air_base   = blend_channel_profile(COLOR_DARK_AIR,   COLOR_LIGHT_AIR,   theme_val);
+    uint16_t wall_base  = blend_channel_profile(COLOR_DARK_WALL,  COLOR_LIGHT_WALL,  theme_val);
+    uint16_t sand_base  = blend_channel_profile(COLOR_DARK_SAND,  COLOR_LIGHT_SAND,  theme_val);
+    uint16_t water_base = blend_channel_profile(COLOR_DARK_WATER, COLOR_LIGHT_WATER, theme_val);
+    uint16_t lava_base  = blend_channel_profile(COLOR_DARK_LAVA,  COLOR_LIGHT_LAVA,  theme_val);
+
+    uint8_t air_r = UNPACK_R(air_base), air_g = UNPACK_G(air_base), air_b = UNPACK_B(air_base);
+    uint8_t wall_r = UNPACK_R(wall_base), wall_g = UNPACK_G(wall_base), wall_b = UNPACK_B(wall_base);
+    uint8_t sand_r = UNPACK_R(sand_base), sand_g = UNPACK_G(sand_base), sand_b = UNPACK_B(sand_base);
+    uint8_t water_r = UNPACK_R(water_base), water_g = UNPACK_G(water_base), water_b = UNPACK_B(water_base);
+    uint8_t lava_r = UNPACK_R(lava_base), lava_g = UNPACK_G(lava_base), lava_b = UNPACK_B(lava_base);
+
+    for (int y = 0; y < GRID_HEIGHT; y++) {
+        for (int x = 0; x < GRID_WIDTH; x++) {
+            uint16_t c_air   = generate_noise_pixel(air_r, air_g, air_b,     NOISE_INTENSITY_AIR, x, y);
+            uint16_t c_wall  = generate_noise_pixel(wall_r, wall_g, wall_b,   NOISE_INTENSITY_WALL, x, y);
+            uint16_t c_sand  = generate_noise_pixel(sand_r, sand_g, sand_b,   NOISE_INTENSITY_PARTICLE, x, y);
+            uint16_t c_water = generate_noise_pixel(water_r, water_g, water_b, NOISE_INTENSITY_PARTICLE, x, y);
+            uint16_t c_lava  = generate_noise_pixel(lava_r, lava_g, lava_b,   NOISE_INTENSITY_PARTICLE, x, y);
+
+            int idx = y * GRID_WIDTH + x;
+            
+            air_texture_lut[idx]   = (c_air << 16)   | c_air;
+            wall_texture_lut[idx]  = (c_wall << 16)  | c_wall;
+            sand_texture_lut[idx]  = (c_sand << 16)  | c_sand;
+            water_texture_lut[idx] = (c_water << 16) | c_water;
+            lava_texture_lut[idx]  = (c_lava << 16)  | c_lava;
+        }
+    }
+    last_cached_theme = theme_val;
+}
+
 esp_err_t display_init(void)
 {
+    // 1. Allocate the massive texture LUTs into External PSRAM
+    size_t lut_size_bytes = GRID_WIDTH * GRID_HEIGHT * sizeof(uint32_t);
+    
+    air_texture_lut   = (uint32_t *)heap_caps_malloc(lut_size_bytes, MALLOC_CAP_SPIRAM);
+    wall_texture_lut  = (uint32_t *)heap_caps_malloc(lut_size_bytes, MALLOC_CAP_SPIRAM);
+    sand_texture_lut  = (uint32_t *)heap_caps_malloc(lut_size_bytes, MALLOC_CAP_SPIRAM);
+    water_texture_lut = (uint32_t *)heap_caps_malloc(lut_size_bytes, MALLOC_CAP_SPIRAM);
+    lava_texture_lut  = (uint32_t *)heap_caps_malloc(lut_size_bytes, MALLOC_CAP_SPIRAM);
+
+    if (!air_texture_lut || !wall_texture_lut || !sand_texture_lut || !water_texture_lut || !lava_texture_lut) {
+        ESP_LOGE("DISPLAY", "Failed to allocate 1.25MB texture LUTs in PSRAM!");
+        return ESP_ERR_NO_MEM;
+    }
+
     lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
 
     vsync_sem = xSemaphoreCreateBinary();
@@ -176,6 +258,8 @@ esp_err_t display_init(void)
     };
     esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cbs, NULL);
 
+    update_texture_cache(0.0f);
+
     setUpduty(LCD_PWM_MODE_255);
     return ESP_OK;
 }
@@ -184,6 +268,10 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
 {
     if (panel_handle == NULL || grid_buffer == NULL) return;
 
+    if (fabsf(theme_val - last_cached_theme) > 0.02f) {
+        update_texture_cache(theme_val);
+    }
+
     if (vsync_sem != NULL) {
         xSemaphoreTake(vsync_sem, portMAX_DELAY);
     }
@@ -191,84 +279,35 @@ void display_render_grid(const uint8_t *grid_buffer, sim_rule_t active_rule, flo
     uint16_t *fb = fb_buffers[current_fb_idx];
     if (fb == NULL) return;
 
-    uint16_t dark_particle = COLOR_DARK_SAND;
-    uint16_t light_particle = COLOR_LIGHT_SAND;
-
+    uint32_t *active_particle_lut = sand_texture_lut;
     switch (active_rule) {
-        case SIM_RULE_WATER:
-            dark_particle = COLOR_DARK_WATER;
-            light_particle = COLOR_LIGHT_WATER;
-            break;
-        case SIM_RULE_LAVA:
-            dark_particle = COLOR_DARK_LAVA;
-            light_particle = COLOR_LIGHT_LAVA;
-            break;
-        case SIM_RULE_SAND:
-        default:
-            dark_particle = COLOR_DARK_SAND;
-            light_particle = COLOR_LIGHT_SAND;
-            break;
+        case SIM_RULE_WATER: active_particle_lut = water_texture_lut; break;
+        case SIM_RULE_LAVA:  active_particle_lut = lava_texture_lut;  break;
+        case SIM_RULE_SAND:  
+        default:             active_particle_lut = sand_texture_lut;  break;
     }
-
-    uint16_t air_base    = blend_channel_profile(COLOR_DARK_AIR, COLOR_LIGHT_AIR, theme_val);
-    uint16_t wall_base   = blend_channel_profile(COLOR_DARK_WALL, COLOR_LIGHT_WALL, theme_val);
-    uint16_t part_base   = blend_channel_profile(dark_particle, light_particle, theme_val);
-
-    uint8_t air_r  = UNPACK_R(air_base),  air_g  = UNPACK_G(air_base),  air_b  = UNPACK_B(air_base);
-    uint8_t wall_r = UNPACK_R(wall_base), wall_g = UNPACK_G(wall_base), wall_b = UNPACK_B(wall_base);
-    uint8_t part_r = UNPACK_R(part_base), part_g = UNPACK_G(part_base), part_b = UNPACK_B(part_base);
 
     for (int y = 0; y < GRID_HEIGHT; y++) {
         int source_cell_row = y * GRID_WIDTH;
-        uint16_t target_row_buffer[GRID_WIDTH * 2];
+        uint32_t *target_row_fb0 = (uint32_t *)&fb[(y * 2) * LCD_H_RES];
+        uint32_t *target_row_fb1 = (uint32_t *)&fb[((y * 2) + 1) * LCD_H_RES];
 
         for (int x = 0; x < GRID_WIDTH; x++) {
             uint8_t cell = grid_buffer[source_cell_row + x];
-            uint8_t r = 0, g = 0, b = 0;
-            int max_noise = 0;
+            uint32_t packed_double_pixel;
+            int idx = source_cell_row + x;
 
-            switch (cell) {
-                case CELL_TYPE_WALL:
-                    r = wall_r; g = wall_g; b = wall_b;
-                    max_noise = NOISE_INTENSITY_WALL; 
-                    break;
-                case CELL_TYPE_PARTICLE:
-                    r = part_r; g = part_g; b = part_b;
-                    max_noise = NOISE_INTENSITY_PARTICLE; 
-                    break;
-                case CELL_TYPE_AIR:
-                default:
-                    r = air_r; g = air_g; b = air_b;
-                    max_noise = NOISE_INTENSITY_AIR; 
-                    break;
+            if (cell == CELL_TYPE_AIR) {
+                packed_double_pixel = air_texture_lut[idx];
+            } else if (cell == CELL_TYPE_PARTICLE) {
+                packed_double_pixel = active_particle_lut[idx];
+            } else {
+                packed_double_pixel = wall_texture_lut[idx];
             }
 
-            uint32_t hash = ((uint32_t)x * HASH_PRIME_X) ^ ((uint32_t)y * HASH_PRIME_Y);
-            hash = (hash ^ (hash >> HASH_SHIFT_WORD)) * HASH_MIX_STAGE_1;
-            hash = (hash ^ (hash >> HASH_SHIFT_SHORT)) * HASH_MIX_STAGE_2;
-            hash = hash ^ (hash >> HASH_SHIFT_WORD);
-
-            int noise = ((int)(hash % (max_noise * 2 + 1))) - max_noise;
-
-            int mixed_r = r + noise;
-            int mixed_g = g + noise;
-            int mixed_b = b + noise;
-
-            if (mixed_r < CHANNEL_MIN_VAL) mixed_r = CHANNEL_MIN_VAL; else if (mixed_r > CHANNEL_MAX_VAL) mixed_r = CHANNEL_MAX_VAL;
-            if (mixed_g < CHANNEL_MIN_VAL) mixed_g = CHANNEL_MIN_VAL; else if (mixed_g > CHANNEL_MAX_VAL) mixed_g = CHANNEL_MAX_VAL;
-            if (mixed_b < CHANNEL_MIN_VAL) mixed_b = CHANNEL_MIN_VAL; else if (mixed_b > CHANNEL_MAX_VAL) mixed_b = CHANNEL_MAX_VAL;
-
-            uint16_t final_color = PACK_RGB565((uint8_t)mixed_r, (uint8_t)mixed_g, (uint8_t)mixed_b);
-
-            target_row_buffer[x * 2]     = final_color;
-            target_row_buffer[x * 2 + 1] = final_color;
+            target_row_fb0[x] = packed_double_pixel;
+            target_row_fb1[x] = packed_double_pixel;
         }
-
-        int target_pixel_row_0 = (y * 2) * LCD_H_RES;
-        int target_pixel_row_1 = ((y * 2) + 1) * LCD_H_RES;
-
-        memcpy(&fb[target_pixel_row_0], target_row_buffer, sizeof(target_row_buffer));
-        memcpy(&fb[target_pixel_row_1], target_row_buffer, sizeof(target_row_buffer));
     }
 
     esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, LCD_H_RES, LCD_V_RES, fb);
