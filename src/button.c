@@ -6,6 +6,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "storage.h"
+#include <dirent.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "Button_Driver";
 static QueueHandle_t button_evt_queue = NULL;
@@ -18,10 +22,74 @@ typedef enum {
 
 extern volatile system_state_t g_system_state;
 
+// Dynamic tracking variables for the file discovery engine
+static int *g_valid_grid_indices = NULL;
+static int g_total_grids_found = 0;
+static int g_current_array_slot = 0;
+
 static void IRAM_ATTR button_isr_handler(void *arg)
 {
     uint32_t gpio_num = (uint32_t)arg;
     xQueueSendFromISR(button_evt_queue, &gpio_num, NULL);
+}
+
+// Scans the FAT32 directory path dynamically to discover valid grid profiles
+static void discover_sd_grids(void)
+{
+    DIR *dir = opendir("/sdcard");
+    if (dir == NULL) {
+        ESP_LOGW(TAG, "Could not open /sdcard directory for scanning.");
+        g_total_grids_found = 0;
+        return;
+    }
+
+    struct dirent *entry;
+    int capacity = 4;
+    g_valid_grid_indices = malloc(capacity * sizeof(int));
+    g_total_grids_found = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+        // Filter out directories or irrelevant file entities
+        if (entry->d_type == DT_DIR) {
+            continue;
+        }
+
+        // Check if the filename explicitly fits the grid_X.txt convention
+        int scanned_idx = -1;
+        if (sscanf(entry->d_name, "grid_%d.txt", &scanned_idx) == 1) {
+            if (scanned_idx >= 0) {
+                // Resize index container array if capacity limits are breached
+                if (g_total_grids_found >= capacity) {
+                    capacity *= 2;
+                    int *new_arr = realloc(g_valid_grid_indices, capacity * sizeof(int));
+                    if (new_arr == NULL) {
+                        ESP_LOGE(TAG, "Out of memory allocating grid lookup maps!");
+                        break;
+                    }
+                    g_valid_grid_indices = new_arr;
+                }
+                g_valid_grid_indices[g_total_grids_found] = scanned_idx;
+                g_total_grids_found++;
+            }
+        }
+    }
+    closedir(dir);
+
+    // Simple bubble sort to ensure maps are rotated in ascending numerical sequence
+    for (int i = 0; i < g_total_grids_found - 1; i++) {
+        for (int j = 0; j < g_total_grids_found - i - 1; j++) {
+            if (g_valid_grid_indices[j] > g_valid_grid_indices[j + 1]) {
+                int temp = g_valid_grid_indices[j];
+                g_valid_grid_indices[j] = g_valid_grid_indices[j + 1];
+                g_valid_grid_indices[j + 1] = temp;
+            }
+        }
+    }
+
+    ESP_LOGI(TAG, "Grid discovery complete. Located %d map profiles dynamically on media.", g_total_grids_found);
+    for (int i = 0; i < g_total_grids_found; i++) {
+        ESP_LOGI(TAG, " -> Found slot [%d]: grid_%d.txt", i, g_valid_grid_indices[i]);
+    }
 }
 
 static void button_task(void *pvParameters)
@@ -29,7 +97,11 @@ static void button_task(void *pvParameters)
     uint32_t io_num;
     int64_t last_valid_press = 0;
     const int64_t blanking_delay_ms = 300;
+    const int64_t map_press_target_ms = 1500;
     const int64_t long_press_target_ms = 5000;
+
+    // Scan file layout right as the task context fires up
+    discover_sd_grids();
 
     while (1) {
         if (xQueueReceive(button_evt_queue, &io_num, portMAX_DELAY)) {
@@ -43,43 +115,70 @@ static void button_task(void *pvParameters)
 
             if (gpio_get_level(io_num) == 0) {
                 int64_t press_start_time = esp_timer_get_time() / 1000;
-                bool is_long_press = false;
+                int64_t hold_duration = 0;
+                bool map_loaded_during_this_press = false;
+                bool usb_triggered_during_this_press = false;
 
-                // Loop tracking to calculate active hold duration
                 while (gpio_get_level(io_num) == 0) {
-                    int64_t hold_duration = (esp_timer_get_time() / 1000) - press_start_time;
+                    hold_duration = (esp_timer_get_time() / 1000) - press_start_time;
 
-                    if (hold_duration >= long_press_target_ms) {
-                        is_long_press = true;
-                        break;
+                    // 1. Immediate map load window triggered right at 1.5s hold duration threshold
+                    if (hold_duration >= map_press_target_ms && hold_duration < long_press_target_ms) {
+                        if (!map_loaded_during_this_press) {
+                            map_loaded_during_this_press = true;
+
+                            if (g_system_state == SYS_STATE_SIMULATION) {
+                                if (p_grid_ctx != NULL) {
+                                    if (g_total_grids_found > 0) {
+                                        g_current_array_slot = (g_current_array_slot + 1) % g_total_grids_found;
+                                        int next_target_file_idx = g_valid_grid_indices[g_current_array_slot];
+                                        
+                                        ESP_LOGI(TAG, "Immediate 1.5s threshold met. Rotating to dynamic map index %d...", next_target_file_idx);
+                                        particle_grid_init(p_grid_ctx, next_target_file_idx);
+                                    } else {
+                                        ESP_LOGW(TAG, "1.5s hold passed, but no files found on media. Loading fallback map.");
+                                        particle_grid_init_default(p_grid_ctx);
+                                    }
+                                }
+                            } else if (g_system_state == SYS_STATE_USB_STORAGE) {
+                                ESP_LOGI(TAG, "Hold threshold reached in storage session. Restoring simulation loop...");
+                                storage_disable_usb_msc();
+                                storage_mount_local();
+                                discover_sd_grids(); // Re-scan media since the user might have modified files over USB
+                                g_system_state = SYS_STATE_SIMULATION;
+                            }
+                        }
                     }
-                    vTaskDelay(pdMS_TO_TICKS(50));
+
+                    // 2. Immediate USB storage mode entry triggered right at 5.0s hold duration threshold
+                    if (hold_duration >= long_press_target_ms) {
+                        if (!usb_triggered_during_this_press) {
+                            usb_triggered_during_this_press = true;
+
+                            if (g_system_state == SYS_STATE_SIMULATION) {
+                                ESP_LOGW(TAG, "5s Hold Met! Pausing simulation, switching to USB Storage Mode...");
+                                g_system_state = SYS_STATE_USB_STORAGE;
+                                
+                                storage_unmount_local();
+                                storage_usb_init(); 
+                                storage_enable_usb_msc();
+                            } else {
+                                ESP_LOGW(TAG, "Long press detected during storage session. Restoring simulation loop...");
+                                storage_disable_usb_msc();
+                                storage_mount_local();
+                                discover_sd_grids(); // Re-scan files right after closing the storage connection
+                                g_system_state = SYS_STATE_SIMULATION;
+                            }
+                        }
+                    }
+
+                    vTaskDelay(pdMS_TO_TICKS(20));
                 }
 
                 last_valid_press = esp_timer_get_time() / 1000;
 
-                if (is_long_press) {
-                    if (g_system_state == SYS_STATE_SIMULATION) {
-                        g_system_state = SYS_STATE_USB_STORAGE;
-                        
-                        storage_unmount_local();
-                        
-                        // Initialize the USB stack only when requested
-                        storage_usb_init(); 
-                        storage_enable_usb_msc();
-                    } else {
-                        ESP_LOGW(TAG, "Long press detected during storage session. Restoring simulation loop...");
-                        storage_disable_usb_msc();
-                        storage_mount_local();
-                        
-                        g_system_state = SYS_STATE_SIMULATION;
-                    }
-
-                    // Spin-lock loop while button is still physically pushed down to block cascade edges
-                    while (gpio_get_level(io_num) == 0) {
-                        vTaskDelay(pdMS_TO_TICKS(50));
-                    }
-                } else {
+                // 3. Short press hook (less than 1.5s hold)
+                if (!map_loaded_during_this_press && !usb_triggered_during_this_press) {
                     if (g_system_state == SYS_STATE_SIMULATION) {
                         if (p_grid_ctx != NULL) {
                             sim_rule_t next_rule = (p_grid_ctx->active_rule_type + 1) % 3;
@@ -98,7 +197,7 @@ static void button_task(void *pvParameters)
                         ESP_LOGI(TAG, "Short press detected during storage session. Restoring simulation loop...");
                         storage_disable_usb_msc();
                         storage_mount_local();
-                        
+                        discover_sd_grids(); // Scan for changes after a quick press exit
                         g_system_state = SYS_STATE_SIMULATION;
                     }
                 }

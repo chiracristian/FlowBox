@@ -15,12 +15,10 @@ typedef enum {
     SYS_STATE_USB_STORAGE
 } system_state_t;
 
-// Set volatile to guarantee safe access across tasks
 volatile system_state_t g_system_state = SYS_STATE_SIMULATION;
 
 static const char *TAG = "FlowBox_Core";
 
-static int grid_idx = 0;
 static particle_grid_context_t grid_ctx;
 static i2c_imu_data_t sim_motion_frame;
 static i2c_imu_data_t log_motion_frame;
@@ -76,17 +74,27 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "===============================================");
 
-    // Set up storage tracks before display and simulation loops begin;
-    storage_mount_local();
-
+    // 1. Initialize the screen first to let its low-level peripheral allocations settle
     esp_err_t disp_err = display_init();
     if (disp_err != ESP_OK) {
         ESP_LOGE(TAG, "CRITICAL: Failed to initialize ST7701/RGB display controller!");
         return;
     }
 
-    particle_grid_init(&grid_ctx, grid_idx);
+    // 2. Add a short tracking delay window so shared pins 1 and 2 reset safely
+    vTaskDelay(pdMS_TO_TICKS(400));
 
+    // 3. Mount the local storage file system partition wrapper
+    ESP_LOGI(TAG, "Mounting local microSD file system partition layer...");
+    esp_err_t storage_err = storage_mount_local();
+    if (storage_err != ESP_OK) {
+        ESP_LOGW(TAG, "Storage mount failed (%s). Defaulting to hardcoded map profiles.", esp_err_to_name(storage_err));
+    }
+
+    // 4. Initialize particle context tracking grid index 0 (grid_0.txt)
+    particle_grid_init(&grid_ctx, 0);
+
+    // 5. Fire up the input interaction monitors
     button_init(&grid_ctx);
 
     xTaskCreatePinnedToCore(simulation_task, "sim_task", 4096, NULL, 5, NULL, 1);
