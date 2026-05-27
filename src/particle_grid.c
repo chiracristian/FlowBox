@@ -144,6 +144,9 @@ void particle_grid_init(particle_grid_context_t *ctx, unsigned grid_number)
 {
     if (ctx == NULL) return;
 
+    // Disconnect the physics rule immediately to pause simulation tasks safely
+    ctx->update_particle = NULL;
+
     char filename[FILENAME_MAX_LENGTH];
     snprintf(filename, sizeof(filename), "/sdcard/grid_%u.txt", grid_number);
 
@@ -180,6 +183,8 @@ void particle_grid_init(particle_grid_context_t *ctx, unsigned grid_number)
 
     fclose(f);
     memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
+    
+    // Explicitly restore the rule physics now that memory copy operations are completely done
     particle_grid_set_rule(ctx, SIM_RULE_SAND);
     ESP_LOGI("GridLoader", "Successfully loaded %s", filename);
 }

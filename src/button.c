@@ -130,26 +130,35 @@ static void button_task(void *pvParameters)
                             if (g_system_state == SYS_STATE_SIMULATION) {
                                 if (p_grid_ctx != NULL) {
                                     if (g_total_grids_found > 0) {
+                                        // Temporarily signal storage state to pause the simulation task frame loops completely
+                                        g_system_state = SYS_STATE_USB_STORAGE;
+                                        vTaskDelay(pdMS_TO_TICKS(20)); // Short window allowing current frame execution to finish cleanly
+
                                         g_current_array_slot = (g_current_array_slot + 1) % g_total_grids_found;
                                         int next_target_file_idx = g_valid_grid_indices[g_current_array_slot];
                                         
                                         ESP_LOGI(TAG, "Immediate 1.5s threshold met. Rotating to dynamic map index %d...", next_target_file_idx);
                                         particle_grid_init(p_grid_ctx, next_target_file_idx);
+
+                                        // Re-enable the simulation loop safely now that file streaming has finished
+                                        g_system_state = SYS_STATE_SIMULATION;
                                     } else {
+                                        g_system_state = SYS_STATE_USB_STORAGE;
+                                        vTaskDelay(pdMS_TO_TICKS(20));
                                         ESP_LOGW(TAG, "1.5s hold passed, but no files found on media. Loading fallback map.");
                                         particle_grid_init_default(p_grid_ctx);
+                                        g_system_state = SYS_STATE_SIMULATION;
                                     }
                                 }
                             } else if (g_system_state == SYS_STATE_USB_STORAGE) {
                                 ESP_LOGI(TAG, "Hold threshold reached in storage session. Restoring simulation loop...");
                                 storage_disable_usb_msc();
                                 storage_mount_local();
-                                discover_sd_grids(); // Re-scan media since the user might have modified files over USB
+                                discover_sd_grids(); 
                                 g_system_state = SYS_STATE_SIMULATION;
                             }
                         }
                     }
-
                     // 2. Immediate USB storage mode entry triggered right at 5.0s hold duration threshold
                     if (hold_duration >= long_press_target_ms) {
                         if (!usb_triggered_during_this_press) {
