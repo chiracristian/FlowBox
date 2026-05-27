@@ -9,4 +9,6 @@ idf_component_register(
         "lcd_bl_pwm_bsp.c"
     INCLUDE_DIRS 
         "."
+    REQUIRES 
+        esp_tinyusb
 )

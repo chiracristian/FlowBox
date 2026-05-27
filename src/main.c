@@ -8,6 +8,16 @@
 #include "display.h"
 #include "button.h"
 
+#include "storage.h"
+
+typedef enum {
+    SYS_STATE_SIMULATION,
+    SYS_STATE_USB_STORAGE
+} system_state_t;
+
+// Set volatile to guarantee safe access across tasks
+volatile system_state_t g_system_state = SYS_STATE_SIMULATION;
+
 static const char *TAG = "FlowBox_Core";
 
 static particle_grid_context_t grid_ctx;
@@ -20,12 +30,17 @@ static volatile float current_theme_param = 0.0f;
 static void simulation_task(void *pvParameters)
 {
     while (1) {
-        if (i2c_sensor_read_imu(&sim_motion_frame) == ESP_OK) {
-            particle_grid_step(&grid_ctx, sim_motion_frame.acc_x, sim_motion_frame.acc_y);
-        }
+        if (g_system_state == SYS_STATE_SIMULATION) {
+            if (i2c_sensor_read_imu(&sim_motion_frame) == ESP_OK) {
+                particle_grid_step(&grid_ctx, sim_motion_frame.acc_x, sim_motion_frame.acc_y);
+            }
 
-        const uint8_t *render_source = particle_grid_get_render_buffer(&grid_ctx);
-        display_render_grid(render_source, grid_ctx.active_rule_type, current_theme_param);
+            const uint8_t *render_source = particle_grid_get_render_buffer(&grid_ctx);
+            display_render_grid(render_source, grid_ctx.active_rule_type, current_theme_param);
+        } else {
+            // Simulation is paused during USB Storage Mode
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 }
 
@@ -59,6 +74,9 @@ void app_main(void)
         return;
     }
     ESP_LOGI(TAG, "===============================================");
+
+    // Set up storage tracks before display and simulation loops begin;
+    storage_mount_local();
 
     esp_err_t disp_err = display_init();
     if (disp_err != ESP_OK) {

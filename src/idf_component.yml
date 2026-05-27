@@ -2,6 +2,7 @@
 dependencies:
   espressif/esp_lcd_panel_io_additions: ^1.0.1
   espressif/esp_lcd_st7701: ^1.1.0
-  ## Required IDF version
+  espressif/esp_tinyusb:
+    version: "^1.4.0"
   idf:
     version: '>=4.1.0'
