@@ -3,4 +3,3 @@
 managed_components/
 dependencies.lock
 sdkconfig.esp32-s3-lcd-3_16
-grid_generators/*.txt

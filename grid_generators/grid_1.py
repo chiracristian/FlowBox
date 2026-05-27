@@ -8,7 +8,7 @@ def generate_funnel_grid(filename, width, height):
             if x < 1 or x >= width - 1 or y < 1 or y >= height - 1:
                 grid[y][x] = 1
 
-    # 2. FUNNEL WALLS (Same logic as your C code)
+    # 2. FUNNEL WALLS
     mid_x = width // 2
     for y in range(35, 50):
         wall_gap = 4 + ((50 - 35 - (y - 35)) // 2)
@@ -17,9 +17,14 @@ def generate_funnel_grid(filename, width, height):
         grid[y][mid_x + wall_gap] = 1
         grid[y][mid_x + wall_gap + 1] = 1
         
-        # 3. FILL FUNNEL WITH PARTICLES (2)
-        # Fill the space between the left and right wall
+        
         for x in range(mid_x - wall_gap + 1, mid_x + wall_gap):
+            grid[y][x] = 2
+
+    # 3. FILL FUNNEL WITH PARTICLES (2)
+    # Fill the space between the left and right wall
+    for y in range(15, 35):
+        for x in range(mid_x - wall_gap - 15 + 1, mid_x + wall_gap + 15):
             grid[y][x] = 2
 
     # 4. REMAINING STRUCTURES (Pegs, Basin, Separator)
