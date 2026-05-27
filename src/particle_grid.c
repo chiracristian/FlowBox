@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include "esp_log.h"
 
 /* Map Layout Geometry Scaled for 80x205 Grid */
 #define FUNNEL_TOP_Y            35
@@ -27,15 +28,43 @@
 #define SEPARATOR_END_Y         195
 #define SEPARATOR_THICKNESS     2
 
-/* Vastly increased substepping limits for smoother ASMR fluid physics */
+/* Substepping limits for smooth ASMR fluid physics */
 #define WATER_SUBSTEPS          5 
-#define SAND_SUBSTEPS           3 
+#define SAND_SUBSTEPS           3
+
+#define FILENAME_MAX_LENGTH 32
+#define FILE_HEADER_LENGTH 12
 
 static void update_sand_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_water_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 static void update_lava_physics(particle_grid_context_t *ctx, int x, int y, float acc_x, float acc_y);
 
-void particle_grid_init(particle_grid_context_t *ctx)
+void particle_grid_spawn_triangle(particle_grid_context_t *ctx, uint16_t x, uint16_t y, uint16_t length, uint16_t height)
+{
+    if (ctx == NULL) return;
+
+    for (uint16_t row = 0; row < height; row++) {
+        uint16_t row_width = (length * (height - row)) / height;
+        if (row_width == 0) row_width = 1;
+
+        uint16_t row_start_x = x + (length - row_width) / 2;
+
+        for (uint16_t col = 0; col < row_width; col++) {
+            uint16_t target_x = row_start_x + col;
+            uint16_t target_y = y - row; 
+
+            if (target_x < GRID_WIDTH && target_y < GRID_HEIGHT) {
+                int index = CELL(target_x, target_y);
+                if (ctx->current_grid[index] == CELL_TYPE_AIR) {
+                    ctx->current_grid[index] = CELL_TYPE_PARTICLE;
+                    ctx->next_grid[index] = CELL_TYPE_PARTICLE;
+                }
+            }
+        }
+    }
+}
+
+void particle_grid_init_default(particle_grid_context_t *ctx)
 {
     if (ctx == NULL) return;
 
@@ -105,33 +134,54 @@ void particle_grid_init(particle_grid_context_t *ctx)
         }
     }
 
+    particle_grid_spawn_triangle(ctx, 30, 40, 20, 30);
+
     memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
     particle_grid_set_rule(ctx, SIM_RULE_SAND);
 }
 
-void particle_grid_spawn_triangle(particle_grid_context_t *ctx, uint16_t x, uint16_t y, uint16_t length, uint16_t height)
+void particle_grid_init(particle_grid_context_t *ctx, unsigned grid_number)
 {
     if (ctx == NULL) return;
 
-    for (uint16_t row = 0; row < height; row++) {
-        uint16_t row_width = (length * (height - row)) / height;
-        if (row_width == 0) row_width = 1;
+    char filename[FILENAME_MAX_LENGTH];
+    snprintf(filename, sizeof(filename), "/sdcard/grid_%u.txt", grid_number);
 
-        uint16_t row_start_x = x + (length - row_width) / 2;
+    FILE *f = fopen(filename, "r");
+    if (f == NULL) {
+        ESP_LOGW("GridLoader", "File %s not found, loading default.", filename);
+        particle_grid_init_default(ctx);
+        return;
+    }
 
-        for (uint16_t col = 0; col < row_width; col++) {
-            uint16_t target_x = row_start_x + col;
-            uint16_t target_y = y - row; 
+    char header[FILE_HEADER_LENGTH+1];
+    if (fgets(header, sizeof(header), f) == NULL || strncmp(header, "FLOWBOX_GRID", FILE_HEADER_LENGTH) != 0) {
+        ESP_LOGE("GridLoader", "Invalid header in %s", filename);
+        fclose(f);
+        particle_grid_init_default(ctx);
+        return;
+    }
 
-            if (target_x < GRID_WIDTH && target_y < GRID_HEIGHT) {
-                int index = CELL(target_x, target_y);
-                if (ctx->current_grid[index] == CELL_TYPE_AIR) {
-                    ctx->current_grid[index] = CELL_TYPE_PARTICLE;
-                    ctx->next_grid[index] = CELL_TYPE_PARTICLE;
-                }
+    ctx->current_grid = ctx->grid_buffer_0;
+    ctx->next_grid = ctx->grid_buffer_1;
+
+    for (int y = 0; y < GRID_HEIGHT; y++) {
+        for (int x = 0; x < GRID_WIDTH; x++) {
+            int val;
+            if (fscanf(f, "%d", &val) != 1) {
+                ESP_LOGE("GridLoader", "Format error at y=%d, x=%d", y, x);
+                fclose(f);
+                particle_grid_init_default(ctx);
+                return;
             }
+            ctx->current_grid[CELL(x, y)] = (uint8_t)val;
         }
     }
+
+    fclose(f);
+    memcpy(ctx->next_grid, ctx->current_grid, GRID_SIZE);
+    particle_grid_set_rule(ctx, SIM_RULE_SAND);
+    ESP_LOGI("GridLoader", "Successfully loaded %s", filename);
 }
 
 void particle_grid_set_rule(particle_grid_context_t *ctx, sim_rule_t target_rule)

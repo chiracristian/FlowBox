@@ -40,12 +40,19 @@ struct particle_grid_context {
 };
 
 /**
+ * @brief Initializes a grid context. If grid_number corresponds to a valid 
+ * file on the SD card, that file is loaded. Otherwise, defaults to the 
+ * hardcoded funnel map.
+ */
+void particle_grid_init(particle_grid_context_t *ctx, unsigned grid_number);
+
+/**
  * @brief Initializes a pre-allocated grid context instance.
  * Fills the bounding perimeter edges with CELL_TYPE_WALL, injects static internal 
  * obstacle walls in the center zone, and leaves the remaining space as air.
  * @param ctx Pointer to a context structure allocated by the caller.
  */
-void particle_grid_init(particle_grid_context_t *ctx);
+void particle_grid_init_default(particle_grid_context_t *ctx);
 
 /**
  * @brief Spawns a precise cluster of particles arranged in an upward-pointing isosceles triangle. 

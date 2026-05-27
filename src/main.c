@@ -20,6 +20,7 @@ volatile system_state_t g_system_state = SYS_STATE_SIMULATION;
 
 static const char *TAG = "FlowBox_Core";
 
+static int grid_idx = 0;
 static particle_grid_context_t grid_ctx;
 static i2c_imu_data_t sim_motion_frame;
 static i2c_imu_data_t log_motion_frame;
@@ -84,8 +85,7 @@ void app_main(void)
         return;
     }
 
-    particle_grid_init(&grid_ctx);
-    particle_grid_spawn_triangle(&grid_ctx, 30, 40, 20, 30);
+    particle_grid_init(&grid_ctx, grid_idx);
 
     button_init(&grid_ctx);
 
