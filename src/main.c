@@ -111,7 +111,7 @@ void app_main(void)
         esp_err_t imu_status = i2c_sensor_read_imu(&log_motion_frame);
         esp_err_t lux_status = i2c_sensor_read_light(&current_ambient_lux, &raw_ch0, &raw_ch1);
 
-        if (lux_status == ESP_OK) {
+        if (lux_status == ESP_OK && current_ambient_lux != 0.f) {
             float param = current_ambient_lux / LIGHT_THEME_LUX;
             if (param > 1.0f) param = 1.0f;
             if (param < 0.0f) param = 0.0f;
