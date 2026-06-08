@@ -2,6 +2,10 @@
 
 FlowBox is an interactive, bare-metal embedded device designed to simulate a physical container filled with granular particles or fluid (available materials are sand, water, and lava). Powered by an ESP32-S3 and written in pure C using the ESP-IDF framework, the system captures real-time 3-axis accelerometer data to dynamically orient a particle physics grid on an IPS display.
 
+## Video Demo
+
+https://github.com/user-attachments/assets/2c0f6f7b-8cfc-4257-a24f-4f1218e63782
+
 ## Hardware Subsystem Architecture
 The project utilizes an integrated development board configuration with the following peripheral matrix:
 * **MCU:** ESP32-S3R8 (Dual-Core Xtensa 32-bit LX7 processor with 8MB packaged PSRAM).
